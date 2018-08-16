@@ -19,49 +19,51 @@ import android.util.Size
 import android.view.Surface
 import android.view.TextureView
 import androidx.core.app.ActivityCompat
-import kotlinx.coroutines.experimental.android.UI
-import kotlinx.coroutines.experimental.launch
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.coroutines.experimental.suspendCoroutine
 
 @SuppressLint("MissingPermission")
 /**
  * camera2 API deconstructed - done through lazy loads
+ * Wrap calls in `launch(UI) { cam.takePicture() }`
  */
 class EZCam(private val context: Activity, private val previewTextureView: TextureView) {
 
 
     /** The surface that the preview gets drawn on */
-    private val readySurface = LazySuspendFun<Surface> { cont ->
+    private val readySurface = LazySuspendFun {
         Log.d(TAG, "EZCam.readySurface:start")
         if (previewTextureView.isAvailable) {
-            cont.resume(Surface(previewTextureView.surfaceTexture)).also {
+            Surface(previewTextureView.surfaceTexture).also {
                 Log.i(TAG, "Created readySurface directly")
             }
         } else {
-            previewTextureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
-                    cont.resume(Surface(surfaceTexture)).also {
-                        Log.i(TAG, "Created readySurface through a surfaceTextureListener")
+            suspendCoroutine { cont ->
+                previewTextureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                    override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
+                        cont.resume(Surface(surfaceTexture).also {
+                            Log.i(TAG, "Created readySurface through a surfaceTextureListener")
+                        })
                     }
-                }
 
-                override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {}
-                override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean = false
-                override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {}
+                    override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {}
+                    override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean = false
+                    override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {}
+                }
             }
         }
-        Log.d(TAG, "EZCam.readySurface:end")
     }
 
     /** A fully opened camera */
-    private val cameraDevice = LazySuspendFun<CameraDevice> { cont ->
+    private val cameraDevice = LazySuspendFun<CameraDevice> {
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            cont.resumeWithException(IllegalStateException("You don't have the required permissions to open the camera, try guarding with EZPermission."))
-        } else {
-            Log.d(TAG, "cameraManager.openCamera onOpened, cameraDevice is now ready.")
+            throw IllegalStateException("You don't have the required permissions to open the camera, try guarding with EZPermission.")
+        }
+        Log.d(TAG, "cameraManager.openCamera onOpened, cameraDevice is now ready.")
+        suspendCoroutine { cont ->
             cameraManager.openCamera(bestCameraId, object : CameraDevice.StateCallback() {
                 override fun onOpened(camera: CameraDevice) = cont.resume(camera).also {
                     Log.i(TAG, "cameraManager.openCamera onOpened, cameraDevice is now ready.")
@@ -86,10 +88,12 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
 
 
     /** A fully configured capture session */
-    private val cameraCaptureSession = LazySuspendFun<CameraCaptureSession> { cont ->
+    private val cameraCaptureSession = LazySuspendFun<CameraCaptureSession> {
         Log.d(TAG, "EZCam.cameraCaptureSession:start")
-        launch(UI) {
-            cameraDevice().createCaptureSession(Arrays.asList(readySurface(), imageReaderJPEG.surface), object : CameraCaptureSession.StateCallback() {
+        val cd = cameraDevice()
+        val rs = readySurface()
+        suspendCoroutine { cont ->
+            cd.createCaptureSession(Arrays.asList(rs, imageReaderJPEG.surface), object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(session: CameraCaptureSession) = cont.resume(session).also {
                     Log.i(TAG, "Created cameraCaptureSession through createCaptureSession.onConfigured")
                 }
@@ -99,32 +103,28 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
                 }
             }, backgroundHandler)
         }
-        Log.d(TAG, "EZCam.cameraCaptureSession:launched")
     }
 
     /** Builder set to preview mode */
-    private val captureRequestBuilderForPreview = LazySuspendFun<CaptureRequest.Builder> { cont ->
-        launch(UI) {
-            cont.resume(cameraDevice().createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).also {
-                it.addTarget(readySurface())
-                Log.i(TAG, "Created captureRequestBuilderForPreview")
-            })
+    private val captureRequestBuilderForPreview = LazySuspendFun<CaptureRequest.Builder> {
+        cameraDevice().createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).also {
+            it.addTarget(readySurface())
+            Log.i(TAG, "captureRequestBuilderForPreview:created")
         }
     }
 
+
     /** Builder set to higher quality capture mode */
-    private val captureRequestBuilderForImageReader = LazySuspendFun<CaptureRequest.Builder> { cont ->
-        launch(UI) {
-            cont.resume(cameraDevice().createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).also {
-                it.addTarget(imageReaderJPEG.surface)
-                Log.i(TAG, "Created captureRequestBuilderForImageReader")
-            })
+    private val captureRequestBuilderForImageReader = LazySuspendFun<CaptureRequest.Builder> {
+        cameraDevice().createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).also {
+            it.addTarget(imageReaderJPEG.surface)
+            Log.i(TAG, "captureRequestBuilderForImageReader:created")
         }
     }
 
     private val cameraManager: CameraManager by lazy {
         context.getSystemService(Context.CAMERA_SERVICE).also {
-            Log.i(TAG, "Created cameraManager")
+            Log.i(TAG, "cameraManager:created")
         } as CameraManager
     }
 
@@ -138,7 +138,7 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
 
     private val cameraCharacteristics: CameraCharacteristics by lazy {
         cameraManager.getCameraCharacteristics(bestCameraId).also {
-            Log.i(TAG, "Loaded cameraCharacteristics for camera $bestCameraId")
+            Log.i(TAG, "cameraCharacteristics:created for camera $bestCameraId")
         }
     }
 
@@ -146,7 +146,7 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
         // TODO: Previews should be smaller res
         ImageReader.newInstance(imageSizeForImageReader.width, imageSizeForImageReader.height, ImageFormat.JPEG, 3).also {
             it.setOnImageAvailableListener(onImageAvailableForImageReader, backgroundHandler)
-            Log.i(TAG, "Built imageReaderJPEG, maxImages ${it.maxImages}, registered onImageAvailableForImageReader")
+            Log.i(TAG, "imageReaderJPEG:created maxImages ${it.maxImages}, registered onImageAvailableForImageReader")
         }
     }
 
@@ -160,20 +160,20 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
                 else -> 0
             }
         }!!.also {
-            Log.i(TAG, "Found best camera by facing direction: $it")
+            Log.i(TAG, "bestCameraId:created $it")
         }
     }
 
     private val backgroundThread: HandlerThread by lazy {
         HandlerThread("EZCam").also {
             it.start()
-            Log.i(TAG, "Created backgroundThread (and started)")
+            Log.i(TAG, "backgroundThread:created (and started)")
         }
     }
 
     private val backgroundHandler: Handler by lazy {
         Handler(backgroundThread.looper).also {
-            Log.i(TAG, "Created backgroundHandler.")
+            Log.i(TAG, "backgroundHandler:created")
         }
     }
 
@@ -227,6 +227,7 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
      */
     suspend fun close() {
         cameraDevice().close()
+        readySurface().release()
         stopBackgroundThread()
     }
 

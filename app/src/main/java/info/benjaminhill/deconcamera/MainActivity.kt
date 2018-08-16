@@ -1,7 +1,8 @@
 package info.benjaminhill.deconcamera
 
+import android.hardware.camera2.CameraMetadata
+import android.hardware.camera2.CaptureRequest
 import android.os.Bundle
-import android.os.Handler
 import android.util.Log
 import android.view.WindowManager
 import kotlinx.android.synthetic.main.activity_main.*
@@ -9,7 +10,8 @@ import kotlinx.coroutines.experimental.android.UI
 import kotlinx.coroutines.experimental.launch
 
 class MainActivity : EZPermissionActivity() {
-
+    private lateinit var cam: EZCam
+    private lateinit var lotsOfPictures: SetInterval
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -24,9 +26,8 @@ class MainActivity : EZPermissionActivity() {
         }
 
         launch(UI) {
-            val cam = EZCam(this@MainActivity, textureView)
+            cam = EZCam(this@MainActivity, textureView)
 
-            /*
             cam.setCaptureSetting(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CameraMetadata.COLOR_CORRECTION_ABERRATION_MODE_HIGH_QUALITY)
             cam.setCaptureSetting(CaptureRequest.CONTROL_SCENE_MODE, CameraMetadata.CONTROL_SCENE_MODE_NIGHT)
             cam.setCaptureSetting(CaptureRequest.NOISE_REDUCTION_MODE, CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY)
@@ -42,13 +43,12 @@ class MainActivity : EZPermissionActivity() {
 
             cam.setCaptureSetting(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
             cam.setCaptureSetting(CaptureRequest.LENS_FOCUS_DISTANCE, 0.0f)
-            */
 
             Log.i(TAG, "Finished construction, now starting preview.")
             cam.startPreview()
             Log.i(TAG, "Finished starting preview")
 
-            val lotsOfPictures = SetInterval(5_000) {
+            lotsOfPictures = SetInterval(5_000) {
                 launch(UI) {
                     cam.takePicture()
                 }
@@ -59,14 +59,16 @@ class MainActivity : EZPermissionActivity() {
 
     override fun onPause() {
         super.onPause()
-        //cam.stopPreview()
         Log.i(TAG, "onPause - EZCam.stopPreview")
+        launch(UI) { cam.stopPreview() }
+
     }
 
     override fun onDestroy() {
-        //cam.close()
         super.onDestroy()
         Log.i(TAG, "onDestroy - EZCam.close")
+        lotsOfPictures.pause()
+        launch(UI) { cam.close() }
     }
 
     companion object {
@@ -75,28 +77,3 @@ class MainActivity : EZPermissionActivity() {
 }
 
 
-/** Repeating callback that starts in a running state */
-class SetInterval(private val delayMs: Long = 1_000L, action: () -> Unit) {
-    val handler = Handler()
-    private val internalRunnable = object : Runnable {
-        override fun run() {
-            Log.i(MainActivity.TAG, "SetInterval.run")
-            handler.postDelayed(this, delayMs)
-            action()
-        }
-    }
-
-    init {
-        resume()
-    }
-
-    fun pause() {
-        Log.i(MainActivity.TAG, "SetInterval.pause")
-        handler.removeCallbacks(internalRunnable)
-    }
-
-    fun resume() {
-        Log.i(MainActivity.TAG, "SetInterval.resume")
-        handler.postDelayed(internalRunnable, delayMs)
-    }
-}

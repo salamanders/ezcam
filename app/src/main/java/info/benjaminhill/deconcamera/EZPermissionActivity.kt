@@ -12,7 +12,6 @@ import androidx.core.content.ContextCompat
  * Work out the dangerous permissions listed in the AndroidManifest.xml (dynamically)
  * before diving into the app: `runAfterAllPermissionsGranted { yourCode }`
  *
- * TODO: Seems to double up the code when opening a camera?
  */
 abstract class EZPermissionActivity : AppCompatActivity() {
 
