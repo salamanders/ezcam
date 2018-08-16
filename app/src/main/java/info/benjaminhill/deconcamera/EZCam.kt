@@ -19,97 +19,77 @@ import android.util.Size
 import android.view.Surface
 import android.view.TextureView
 import androidx.core.app.ActivityCompat
+import kotlinx.coroutines.experimental.android.UI
+import kotlinx.coroutines.experimental.launch
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
-import kotlin.coroutines.experimental.Continuation
-import kotlin.coroutines.experimental.suspendCoroutine
 
 @SuppressLint("MissingPermission")
 /**
  * camera2 API deconstructed - done through lazy loads
  */
-
 class EZCam(private val context: Activity, private val previewTextureView: TextureView) {
 
+
     /** The surface that the preview gets drawn on */
-    private var readySurfaceCached: Surface? = null
-
-    private suspend fun readySurface(): Surface {
-        readySurfaceCached?.also { return it }
+    private val readySurface = LazySuspendFun<Surface> { cont ->
         Log.d(TAG, "EZCam.readySurface:start")
-        return suspendCoroutine { cont: Continuation<Surface> ->
-            if (previewTextureView.isAvailable) {
-                cont.resume(Surface(previewTextureView.surfaceTexture)).also {
-                    Log.i(TAG, "Created readySurface directly")
-                }
-            } else {
-                previewTextureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                    override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
-                        cont.resume(Surface(surfaceTexture)).also {
-                            Log.i(TAG, "Created readySurface through a surfaceTextureListener")
-                        }
-                    }
-
-                    override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {}
-                    override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean = false
-                    override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {}
-                }
+        if (previewTextureView.isAvailable) {
+            cont.resume(Surface(previewTextureView.surfaceTexture)).also {
+                Log.i(TAG, "Created readySurface directly")
             }
-        }.also {
-            readySurfaceCached = it
-            Log.d(TAG, "EZCam.readySurface:end")
+        } else {
+            previewTextureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
+                    cont.resume(Surface(surfaceTexture)).also {
+                        Log.i(TAG, "Created readySurface through a surfaceTextureListener")
+                    }
+                }
+
+                override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {}
+                override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean = false
+                override fun onSurfaceTextureUpdated(surface: SurfaceTexture) {}
+            }
         }
+        Log.d(TAG, "EZCam.readySurface:end")
     }
 
     /** A fully opened camera */
-    private var cameraDeviceCached: CameraDevice? = null
+    private val cameraDevice = LazySuspendFun<CameraDevice> { cont ->
+        if (ActivityCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            cont.resumeWithException(IllegalStateException("You don't have the required permissions to open the camera, try guarding with EZPermission."))
+        } else {
+            Log.d(TAG, "cameraManager.openCamera onOpened, cameraDevice is now ready.")
+            cameraManager.openCamera(bestCameraId, object : CameraDevice.StateCallback() {
+                override fun onOpened(camera: CameraDevice) = cont.resume(camera).also {
+                    Log.i(TAG, "cameraManager.openCamera onOpened, cameraDevice is now ready.")
+                }
 
-    private suspend fun cameraDevice(): CameraDevice {
-        cameraDeviceCached?.also { return it }
-        return suspendCoroutine { cont: Continuation<CameraDevice> ->
-            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                cont.resumeWithException(IllegalStateException("You don't have the required permissions to open the camera, try guarding with EZPermission."))
-            } else {
-                Log.d(TAG, "cameraManager.openCamera onOpened, cameraDevice is now ready.")
-                cameraManager.openCamera(bestCameraId, object : CameraDevice.StateCallback() {
-                    override fun onOpened(camera: CameraDevice) = cont.resume(camera).also {
-                        Log.i(TAG, "cameraManager.openCamera onOpened, cameraDevice is now ready.")
-                    }
+                override fun onDisconnected(camera: CameraDevice) = cont.resumeWithException(Exception("Problem with cameraManager.openCamera onDisconnected")).also {
+                    Log.w(TAG, "camera onDisconnected: Camera device is no longer available for use.")
+                }
 
-                    override fun onDisconnected(camera: CameraDevice) = cont.resumeWithException(Exception("Problem with cameraManager.openCamera onDisconnected")).also {
-                        Log.w(TAG, "camera onDisconnected: Camera device is no longer available for use.")
+                override fun onError(camera: CameraDevice, error: Int) = cont.resumeWithException(Exception("Problem with cameraManager.openCamera: $error")).also {
+                    when (error) {
+                        CameraDevice.StateCallback.ERROR_CAMERA_DEVICE -> Log.w(TAG, "CameraDevice.StateCallback: Camera device has encountered a fatal error.")
+                        CameraDevice.StateCallback.ERROR_CAMERA_DISABLED -> Log.w(TAG, "CameraDevice.StateCallback: Camera device could not be opened due to a device policy.")
+                        CameraDevice.StateCallback.ERROR_CAMERA_IN_USE -> Log.w(TAG, "CameraDevice.StateCallback: Camera device is in use already.")
+                        CameraDevice.StateCallback.ERROR_CAMERA_SERVICE -> Log.w(TAG, "CameraDevice.StateCallback: Camera service has encountered a fatal error.")
+                        CameraDevice.StateCallback.ERROR_MAX_CAMERAS_IN_USE -> Log.w(TAG, "CameraDevice.StateCallback: Camera device could not be opened because there are too many other open camera devices.")
                     }
-
-                    override fun onError(camera: CameraDevice, error: Int) = cont.resumeWithException(Exception("Problem with cameraManager.openCamera: $error")).also {
-                        when (error) {
-                            CameraDevice.StateCallback.ERROR_CAMERA_DEVICE -> Log.w(TAG, "CameraDevice.StateCallback: Camera device has encountered a fatal error.")
-                            CameraDevice.StateCallback.ERROR_CAMERA_DISABLED -> Log.w(TAG, "CameraDevice.StateCallback: Camera device could not be opened due to a device policy.")
-                            CameraDevice.StateCallback.ERROR_CAMERA_IN_USE -> Log.w(TAG, "CameraDevice.StateCallback: Camera device is in use already.")
-                            CameraDevice.StateCallback.ERROR_CAMERA_SERVICE -> Log.w(TAG, "CameraDevice.StateCallback: Camera service has encountered a fatal error.")
-                            CameraDevice.StateCallback.ERROR_MAX_CAMERAS_IN_USE -> Log.w(TAG, "CameraDevice.StateCallback: Camera device could not be opened because there are too many other open camera devices.")
-                        }
-                    }
-                }, backgroundHandler)
-            }
-        }.also {
-            cameraDeviceCached = it
-            Log.d(TAG, "EZCam.cameraDevice:end")
+                }
+            }, backgroundHandler)
         }
     }
 
 
     /** A fully configured capture session */
-    private var cameraCaptureSessionCached: CameraCaptureSession? = null
-
-    private suspend fun cameraCaptureSession(): CameraCaptureSession {
-        cameraCaptureSessionCached?.also { return it }
+    private val cameraCaptureSession = LazySuspendFun<CameraCaptureSession> { cont ->
         Log.d(TAG, "EZCam.cameraCaptureSession:start")
-        val cd = cameraDevice()
-        val rs = readySurface()
-        return suspendCoroutine { cont: Continuation<CameraCaptureSession> ->
-            cd.createCaptureSession(Arrays.asList(rs, imageReaderJPEG.surface), object : CameraCaptureSession.StateCallback() {
+        launch(UI) {
+            cameraDevice().createCaptureSession(Arrays.asList(readySurface(), imageReaderJPEG.surface), object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(session: CameraCaptureSession) = cont.resume(session).also {
                     Log.i(TAG, "Created cameraCaptureSession through createCaptureSession.onConfigured")
                 }
@@ -118,37 +98,29 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
                     Log.e(TAG, "onConfigureFailed: Could not configure capture session.")
                 }
             }, backgroundHandler)
-
-        }.also {
-            cameraCaptureSessionCached = it
-            Log.d(TAG, "EZCam.cameraCaptureSession:end")
         }
+        Log.d(TAG, "EZCam.cameraCaptureSession:launched")
     }
 
     /** Builder set to preview mode */
-    private var captureRequestBuilderForPreviewCached: CaptureRequest.Builder? = null
-
-    private suspend fun captureRequestBuilderForPreview(): CaptureRequest.Builder {
-        captureRequestBuilderForPreviewCached?.also { return it }
-        return cameraDevice().createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).also {
-            it.addTarget(readySurface())
-            Log.i(TAG, "Created captureRequestBuilderForPreview")
-            captureRequestBuilderForPreviewCached = it
+    private val captureRequestBuilderForPreview = LazySuspendFun<CaptureRequest.Builder> { cont ->
+        launch(UI) {
+            cont.resume(cameraDevice().createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).also {
+                it.addTarget(readySurface())
+                Log.i(TAG, "Created captureRequestBuilderForPreview")
+            })
         }
     }
 
     /** Builder set to higher quality capture mode */
-    private var captureRequestBuilderForImageReaderCached: CaptureRequest.Builder? = null
-
-    private suspend fun captureRequestBuilderForImageReader(): CaptureRequest.Builder {
-        captureRequestBuilderForImageReaderCached?.also { return it }
-        return cameraDevice().createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).also {
-            it.addTarget(imageReaderJPEG.surface)
-            Log.i(TAG, "Created captureRequestBuilderForImageReader")
-            captureRequestBuilderForImageReaderCached = it
+    private val captureRequestBuilderForImageReader = LazySuspendFun<CaptureRequest.Builder> { cont ->
+        launch(UI) {
+            cont.resume(cameraDevice().createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).also {
+                it.addTarget(imageReaderJPEG.surface)
+                Log.i(TAG, "Created captureRequestBuilderForImageReader")
+            })
         }
     }
-
 
     private val cameraManager: CameraManager by lazy {
         context.getSystemService(Context.CAMERA_SERVICE).also {

@@ -2,7 +2,6 @@ package info.benjaminhill.deconcamera
 
 import android.content.pm.PackageManager
 import android.os.Bundle
-
 import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -12,10 +11,10 @@ import androidx.core.content.ContextCompat
 /**
  * Work out the dangerous permissions listed in the AndroidManifest.xml (dynamically)
  * before diving into the app: `runAfterAllPermissionsGranted { yourCode }`
+ *
+ * TODO: Seems to double up the code when opening a camera?
  */
 abstract class EZPermissionActivity : AppCompatActivity() {
-
-    private lateinit var permissionCallback: () -> Unit
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -31,32 +30,36 @@ abstract class EZPermissionActivity : AppCompatActivity() {
         }
     }
 
-    /** Protect your code with this block */
-    protected fun runAfterAllPermissionsGranted(f: () -> Unit) = if (missingPermissions.isEmpty()) {
-        Log.i(TAG, "We already have all the permissions (${requiredPermissions.joinToString()}) we needed, running directly")
-        f()
-    } else {
-        // This is a prototype so we skip the right way to do permissions (with reasons given first, fallback plan, etc)
-        Log.i(TAG, "Requesting permissions, be back soon.")
-        logPermissions()
-        permissionCallback = f
-        ActivityCompat.requestPermissions(this, missingPermissions.toTypedArray(), SIMPLE_PERMISSION_ID)
+    /** Block your code in onResume with this */
+    protected fun hasAllRequiredPermissions() = missingPermissions.isEmpty()
+
+    override fun onStart() {
+        super.onStart()
+
+        if (hasAllRequiredPermissions()) {
+            Log.i(TAG, "We already have all the permissions we needed, no need to get involved")
+        } else {
+            // This is a prototype so we skip the right way to do permissions (with reasons given first, fallback plan, etc)
+            Log.i(TAG, "Requesting permissions, be back soon.")
+            logPermissions()
+            ActivityCompat.requestPermissions(this, missingPermissions.toTypedArray(), SIMPLE_PERMISSION_ID)
+        }
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, grantPermissions: Array<out String>, grantResults: IntArray) =
-            if (requestCode == SIMPLE_PERMISSION_ID) {
-                Log.i(TAG, "Permission grant result: ${grantPermissions.joinToString()}=${grantResults.joinToString()}")
-                logPermissions()
-                if (missingPermissions.isEmpty()) {
-                    Log.i(TAG, "User granted all permissions that we requested.")
-                    permissionCallback()
-                } else {
-                    Log.w(TAG, "User declined required permissions: ${missingPermissions.joinToString()}")
-                    Toast.makeText(this, "Please restart the app after allowing access to: ${missingPermissions.joinToString()}", Toast.LENGTH_LONG).show()
-                }
+    override fun onRequestPermissionsResult(requestCode: Int, grantPermissions: Array<out String>, grantResults: IntArray) {
+        if (requestCode == SIMPLE_PERMISSION_ID) {
+            Log.i(TAG, "Permission grant result: ${grantPermissions.joinToString()}=${grantResults.joinToString()}")
+            logPermissions()
+            if (hasAllRequiredPermissions()) {
+                Log.i(TAG, "User granted all permissions that we requested, the next onResume should work")
             } else {
-                super.onRequestPermissionsResult(requestCode, grantPermissions, grantResults)
+                Log.w(TAG, "User declined required permissions: ${missingPermissions.joinToString()}")
+                Toast.makeText(this, "Please restart the app after allowing access to: ${missingPermissions.joinToString()}", Toast.LENGTH_LONG).show()
             }
+        } else {
+            super.onRequestPermissionsResult(requestCode, grantPermissions, grantResults)
+        }
+    }
 
     private fun logPermissions() = requiredPermissions.forEach {
         Log.i(TAG, "Permission: $it; missing: ${it in missingPermissions}")
