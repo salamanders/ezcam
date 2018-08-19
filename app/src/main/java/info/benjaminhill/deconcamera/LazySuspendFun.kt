@@ -11,9 +11,15 @@ package info.benjaminhill.deconcamera
 class LazySuspendFun<out T : Any>(private val f: suspend () -> T) {
     private lateinit var cachedValue: T
 
+    // @Synchronized throws "IllegalMonitorStateException: did not unlock monitor on object of type"
     suspend operator fun invoke(): T {
         if (!::cachedValue.isInitialized) {
-            cachedValue = f()
+            //synchronized(cachedValue) {
+            if (!::cachedValue.isInitialized) {
+                cachedValue = f()
+            }
+            //}
+
         }
         return cachedValue
     }

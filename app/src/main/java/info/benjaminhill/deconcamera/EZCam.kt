@@ -32,7 +32,6 @@ import kotlin.coroutines.experimental.suspendCoroutine
  */
 class EZCam(private val context: Activity, private val previewTextureView: TextureView) {
 
-
     /** The surface that the preview gets drawn on */
     private val readySurface = LazySuspendFun {
         Log.d(TAG, "EZCam.readySurface:start")
@@ -73,7 +72,7 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
                     Log.w(TAG, "camera onDisconnected: Camera device is no longer available for use.")
                 }
 
-                override fun onError(camera: CameraDevice, error: Int) = cont.resumeWithException(Exception("Problem with cameraManager.openCamera: $error")).also {
+                override fun onError(camera: CameraDevice, error: Int) {
                     when (error) {
                         CameraDevice.StateCallback.ERROR_CAMERA_DEVICE -> Log.w(TAG, "CameraDevice.StateCallback: Camera device has encountered a fatal error.")
                         CameraDevice.StateCallback.ERROR_CAMERA_DISABLED -> Log.w(TAG, "CameraDevice.StateCallback: Camera device could not be opened due to a device policy.")
@@ -81,6 +80,12 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
                         CameraDevice.StateCallback.ERROR_CAMERA_SERVICE -> Log.w(TAG, "CameraDevice.StateCallback: Camera service has encountered a fatal error.")
                         CameraDevice.StateCallback.ERROR_MAX_CAMERAS_IN_USE -> Log.w(TAG, "CameraDevice.StateCallback: Camera device could not be opened because there are too many other open camera devices.")
                     }
+                    try {
+                        cont.resumeWithException(Exception("openCamera onError $error"))
+                    } catch (e: IllegalStateException) {
+                        Log.w(TAG, "Swallowing resumeWithException because not the first resume.")
+                    }
+
                 }
             }, backgroundHandler)
         }
