@@ -33,7 +33,7 @@ import kotlin.coroutines.experimental.suspendCoroutine
 class EZCam(private val context: Activity, private val previewTextureView: TextureView) {
 
     /** The surface that the preview gets drawn on */
-    private val readySurface = LazySuspendFun {
+    private val readySurface = LazySuspend {
         Log.d(TAG, "EZCam.readySurface:start")
         if (previewTextureView.isAvailable) {
             Surface(previewTextureView.surfaceTexture).also {
@@ -57,7 +57,7 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
     }
 
     /** A fully opened camera */
-    private val cameraDevice = LazySuspendFun<CameraDevice> {
+    private val cameraDevice = LazySuspend<CameraDevice> {
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             throw IllegalStateException("You don't have the required permissions to open the camera, try guarding with EZPermission.")
         }
@@ -93,7 +93,7 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
 
 
     /** A fully configured capture session */
-    private val cameraCaptureSession = LazySuspendFun<CameraCaptureSession> {
+    private val cameraCaptureSession = LazySuspend<CameraCaptureSession> {
         Log.d(TAG, "EZCam.cameraCaptureSession:start")
         val cd = cameraDevice()
         val rs = readySurface()
@@ -111,7 +111,7 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
     }
 
     /** Builder set to preview mode */
-    private val captureRequestBuilderForPreview = LazySuspendFun<CaptureRequest.Builder> {
+    private val captureRequestBuilderForPreview = LazySuspend<CaptureRequest.Builder> {
         cameraDevice().createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).also {
             it.addTarget(readySurface())
             Log.i(TAG, "captureRequestBuilderForPreview:created")
@@ -120,7 +120,7 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
 
 
     /** Builder set to higher quality capture mode */
-    private val captureRequestBuilderForImageReader = LazySuspendFun<CaptureRequest.Builder> {
+    private val captureRequestBuilderForImageReader = LazySuspend<CaptureRequest.Builder> {
         cameraDevice().createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).also {
             it.addTarget(imageReaderJPEG.surface)
             Log.i(TAG, "captureRequestBuilderForImageReader:created")
