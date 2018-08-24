@@ -33,18 +33,18 @@ import kotlin.coroutines.experimental.suspendCoroutine
 class EZCam(private val context: Activity, private val previewTextureView: TextureView) {
 
     /** The surface that the preview gets drawn on */
-    private val readySurface = LazySuspend {
-        Log.d(TAG, "EZCam.readySurface:start")
+    private val previewSurface = LazySuspend {
+        Log.d(TAG, "EZCam.previewSurface:start")
         if (previewTextureView.isAvailable) {
             Surface(previewTextureView.surfaceTexture).also {
-                Log.i(TAG, "Created readySurface directly")
+                Log.i(TAG, "Created previewSurface directly")
             }
         } else {
             suspendCoroutine { cont ->
                 previewTextureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                     override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
                         cont.resume(Surface(surfaceTexture).also {
-                            Log.i(TAG, "Created readySurface through a surfaceTextureListener")
+                            Log.i(TAG, "Created previewSurface through a surfaceTextureListener")
                         })
                     }
 
@@ -96,7 +96,7 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
     private val cameraCaptureSession = LazySuspend<CameraCaptureSession> {
         Log.d(TAG, "EZCam.cameraCaptureSession:start")
         val cd = cameraDevice()
-        val rs = readySurface()
+        val rs = previewSurface()
         suspendCoroutine { cont ->
             cd.createCaptureSession(Arrays.asList(rs, imageReaderJPEG.surface), object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(session: CameraCaptureSession) = cont.resume(session).also {
@@ -113,7 +113,7 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
     /** Builder set to preview mode */
     private val captureRequestBuilderForPreview = LazySuspend<CaptureRequest.Builder> {
         cameraDevice().createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).also {
-            it.addTarget(readySurface())
+            it.addTarget(previewSurface())
             Log.i(TAG, "captureRequestBuilderForPreview:created")
         }
     }
@@ -207,9 +207,19 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
      * Set CaptureRequest parameters e.g. setCaptureSetting(CaptureRequest.LENS_FOCUS_DISTANCE, 0.0f)
      */
     suspend fun <T> setCaptureSetting(key: CaptureRequest.Key<T>, value: T) {
-        captureRequestBuilderForPreview().set(key, value)
+        // captureRequestBuilderForPreview().set(key, value) Long exposure makes preview sad
         captureRequestBuilderForImageReader().set(key, value)
     }
+
+
+    suspend fun setCaptureSettingMaxExposure() {
+        cameraCharacteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)?.upper?.let { upperExposure ->
+            setCaptureSetting(CaptureRequest.SENSOR_EXPOSURE_TIME, 2 * 1_000_000_000L)
+            Log.i(TAG, "Set exposure to ${2 / 1_000_000_000.0} seconds")
+        }
+    }
+
+
 
     /**
      * start the preview, rebuilding the preview request each time
@@ -232,7 +242,7 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
      */
     suspend fun close() {
         cameraDevice().close()
-        readySurface().release()
+        previewSurface().release()
         stopBackgroundThread()
     }
 

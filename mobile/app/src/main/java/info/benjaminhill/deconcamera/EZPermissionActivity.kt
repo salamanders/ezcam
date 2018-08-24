@@ -10,7 +10,7 @@ import androidx.core.content.ContextCompat
 
 /**
  * Work out the dangerous permissions listed in the AndroidManifest.xml (dynamically)
- * before diving into the app: `runAfterAllPermissionsGranted { yourCode }`
+ * before diving into the onResume: `if (!hasAllRequiredPermissions()) { complain loudly and bail }`
  *
  */
 abstract class EZPermissionActivity : AppCompatActivity() {
@@ -74,7 +74,7 @@ abstract class EZPermissionActivity : AppCompatActivity() {
                 .toSet()
 
     companion object {
-        private const val SIMPLE_PERMISSION_ID = 42
+        private const val SIMPLE_PERMISSION_ID = 4242
         private const val TAG = "ezpermissions"
     }
 }

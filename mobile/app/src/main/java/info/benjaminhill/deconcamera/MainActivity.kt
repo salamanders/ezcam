@@ -38,8 +38,9 @@ class MainActivity : EZPermissionActivity() {
             cam.setCaptureSetting(CaptureRequest.JPEG_QUALITY, 99.toByte())
 
             cam.setCaptureSetting(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
-            cam.setCaptureSetting(CaptureRequest.SENSOR_EXPOSURE_TIME, (2.0 * 1_000_000_000L).toLong()) // ns
-            cam.setCaptureSetting(CaptureRequest.SENSOR_SENSITIVITY, 400) // iso
+            //cam.setCaptureSetting(CaptureRequest.SENSOR_EXPOSURE_TIME, (4.0 * 1_000_000_000L).toLong()) // ns
+            cam.setCaptureSettingMaxExposure()
+            cam.setCaptureSetting(CaptureRequest.SENSOR_SENSITIVITY, 800) // iso
 
             cam.setCaptureSetting(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
             cam.setCaptureSetting(CaptureRequest.LENS_FOCUS_DISTANCE, 0.0f)
