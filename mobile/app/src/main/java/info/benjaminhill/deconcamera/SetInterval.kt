@@ -9,7 +9,7 @@ class SetInterval(private val delayMs: Long = 1_000L, action: () -> Unit) {
     private val internalRunnable = object : Runnable {
         override fun run() {
             Log.i(MainActivity.TAG, "SetInterval.run")
-            handler.postDelayed(this, delayMs)
+            handler.postDelayed(this, delayMs) // does not depend on how long the action takes
             action()
         }
     }

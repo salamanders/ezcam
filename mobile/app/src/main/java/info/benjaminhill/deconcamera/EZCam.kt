@@ -192,7 +192,7 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
             }
 
             val albumFolder = File(Environment.getExternalStoragePublicDirectory(
-                    Environment.DIRECTORY_PICTURES), EZCam.TAG)
+                    Environment.DIRECTORY_DCIM), "/Camera/" + EZCam.TAG)
             albumFolder.mkdirs()
             val imageFile = File(albumFolder, "image_${SDF.format(Date())}.jpg")
             saveImage(imageReaderJPEG.acquireLatestImage(), imageFile)
@@ -211,14 +211,21 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
         captureRequestBuilderForImageReader().set(key, value)
     }
 
-
     suspend fun setCaptureSettingMaxExposure() {
-        cameraCharacteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)?.upper?.let { upperExposure ->
-            setCaptureSetting(CaptureRequest.SENSOR_EXPOSURE_TIME, 2 * 1_000_000_000L)
-            Log.i(TAG, "Set exposure to ${2 / 1_000_000_000.0} seconds")
+        cameraCharacteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)?.upper?.let { maxExposure ->
+            setCaptureSetting(CaptureRequest.SENSOR_EXPOSURE_TIME, maxExposure)
+            Log.i(TAG, "Set exposure to max ${maxExposure / 1_000_000_000.0} seconds")
         }
     }
 
+    suspend fun setFocusDistanceMax() {
+        val hyperfocalDistance = cameraCharacteristics.get(CameraCharacteristics.LENS_INFO_HYPERFOCAL_DISTANCE)
+                ?: 0.0f.also {
+                    Log.w(TAG, "Hyperfocal distance not available")
+                }
+        setCaptureSetting(CaptureRequest.LENS_FOCUS_DISTANCE, hyperfocalDistance)
+        Log.i(TAG, "Set focus to hyperfocal diopters: $hyperfocalDistance")
+    }
 
 
     /**

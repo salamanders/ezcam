@@ -43,7 +43,7 @@ class MainActivity : EZPermissionActivity() {
             cam.setCaptureSetting(CaptureRequest.SENSOR_SENSITIVITY, 800) // iso
 
             cam.setCaptureSetting(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
-            cam.setCaptureSetting(CaptureRequest.LENS_FOCUS_DISTANCE, 0.0f)
+            cam.setFocusDistanceMax()
 
             Log.i(TAG, "Finished construction, now starting preview.")
             cam.startPreview()
