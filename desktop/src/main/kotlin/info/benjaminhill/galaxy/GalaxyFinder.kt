@@ -1,103 +1,151 @@
 package info.benjaminhill.galaxy
 
-import java.io.File
-import kotlin.system.measureTimeMillis
 
+import java.awt.image.BufferedImage
+import java.io.File
+import java.util.concurrent.ThreadLocalRandom
+import javax.imageio.ImageIO
+
+const val TRAIL_MAX_GAP_FRAME = 10
+const val TRAIL_MIN_DURATION_MS = 5 * 60 * 1000
+const val MIN_TRAIL_STARS = 10
+const val TRAIL_MIN_DELTA_PX = 100
+const val STAR_MAX_HOP_PX = 50
 
 fun main(args: Array<String>) {
-    println("go!")
-    val ms = measureTimeMillis {
 
-        val maxLum = File("/Users/benhill/Downloads/Photos/").walk()
+    println("Extracting star locations.")
+    // Prep by determining star locations using a sequence, then reload with just the metadata (will run out of memory if all in the same pass)
+    Frame.sourceImages()
+            .take(100)
+            .map { FrameWithStars(it) }
+            .forEach {
+                it.loadMetadata()
+            }
 
-                .filter { it.isImage() }.sortedBy { it.name }
-                // .filterIndexed { index, _ -> index % 5 == 0 }
-                //.take(50)
-                .chunked(3) { forSum ->
-                    println("Chunk size for Sum: ${forSum.size}")
-                    frameSum(forSum.map { Frame.load(it) })
-                            //.also { it.save("temp_sum") } // extend the exposure
-                }.chunked(5) {forMedian->
-                    println("Chunk size for Median: ${forMedian.size}")
-                    frameMedian(forMedian)
-                            //.also { it.save("temp_median") }
-                }.reduce { acc, frame ->
-                    frameMaxLum(listOf(acc, frame)).also {
-                        it.save("temp_maxlum")
-                    }
-                }
-                
-        maxLum.save("maxLum")
-    }
-    println("Total time: $ms / 1_000} seconds")
-}
+    val allFrames = Frame.sourceImages().map { FrameWithStars(it) }.onEach { it.loadMetadata() }.take(20).toList()
+    val tlr = ThreadLocalRandom.current()!!
+    val sampleFrames = allFrames
+    val width = sampleFrames.first().width
+    val height = sampleFrames.first().height
 
-fun frameMaxLum(others: Collection<Frame>): Frame {
-    require(others.isNotEmpty())
-    val width = others.first().width
-    val height = others.first().height
-    val f = Frame(width, height, "max")
-    for (i in 0 until width * height) {
-        others.maxBy { it.lum[i] }!!.let { maxFrame ->
-            f.red[i] = maxFrame.red[i]
-            f.green[i] = maxFrame.green[i]
-            f.blue[i] = maxFrame.blue[i]
+    var centerOfRotationX = width / 2
+    var centerOfRotationY = height / 2
+    var degreesPerMs = FrameWithStars.DEGREES_PER_MS
+    // TODO var temperature = 1.0
+    var sequentialFails = 0
+    var deviation = Double.MAX_VALUE
+    for (i in 0 until 50_000) {
+        val newX = centerOfRotationX + tlr.nextInt(-50, 50)
+        val newY = centerOfRotationY + tlr.nextInt(-50, 50)
+        val newDegreesPerMs = degreesPerMs + tlr.nextDouble(-(FrameWithStars.DEGREES_PER_MS / 5), (FrameWithStars.DEGREES_PER_MS / 5))
+        val newDeviation = sampleFrames[15].deviation(sampleFrames[16], newX, newY, newDegreesPerMs)
+        /*+
+                sampleFrames[1].deviation(sampleFrames[2], newX, newY, newDegreesPerMs) +
+                sampleFrames[2].deviation(sampleFrames[3], newX, newY, newDegreesPerMs) +
+                sampleFrames[3].deviation(sampleFrames[4], newX, newY, newDegreesPerMs)
+                */
+        if (newDeviation < deviation) {
+            centerOfRotationX = newX
+            centerOfRotationY = newY
+            degreesPerMs = newDegreesPerMs
+            deviation = newDeviation
+            sequentialFails = 0
+        } else {
+            sequentialFails++
         }
-    }
-    f.updateLums()
-    return f
-}
-
-fun frameSum(others: Collection<Frame>): Frame {
-    require(others.isNotEmpty())
-    val width = others.first().width
-    val height = others.first().height
-    val f = Frame(width, height, "sum")
-    for (i in 0 until width * height) {
-        var r = 0
-        var g = 0
-        var b = 0
-        others.forEach {
-            r += it.red[i].toInt() and 0xFF
-            g += it.green[i].toInt() and 0xFF
-            b += it.blue[i].toInt() and 0xFF
-        }
-        f.red[i] = minOf(r, 255).toByte()
-        f.green[i] = minOf(g, 255).toByte()
-        f.blue[i] = minOf(b, 255).toByte()
-    }
-    f.updateLums()
-    return f
-}
-
-fun frameMedian(others: Collection<Frame>): Frame {
-    require(others.isNotEmpty())
-    val width = others.first().width
-    val height = others.first().height
-    val f = Frame(width, height, "median")
-    val isEven = others.size % 2 == 0
-    if (isEven) {
-        println("Warning: must do averaging when median and even size: ${others.size}")
-    }
-    val half = Math.floor((others.size - 1) / 2.0).toInt()
-    for (i in 0 until width * height) {
-        others.sortedBy { it.lum[i] }.let { sortedFrames ->
-            val halfFrame = sortedFrames.elementAt(half)
-            if (isEven) {
-                val halfFramePlus = sortedFrames.elementAt(half + 1)
-                f.red[i] = byteAvg(halfFrame.red[i], halfFramePlus.red[i])
-                f.green[i] = byteAvg(halfFrame.green[i], halfFramePlus.green[i])
-                f.blue[i] = byteAvg(halfFrame.blue[i], halfFramePlus.blue[i])
-            } else {
-                f.red[i] = halfFrame.red[i]
-                f.green[i] = halfFrame.green[i]
-                f.blue[i] = halfFrame.blue[i]
+        if (i % 1_000 == 0) {
+            println("$centerOfRotationX, $centerOfRotationY, $degreesPerMs ($deviation)")
+            if (sequentialFails >= 3_000) {
+                println("Breaking after $i iterations.")
+                break
             }
         }
     }
-    f.updateLums()
-    return f
+
+    System.exit(0)
+
+    val starLocations = BufferedImage(allFrames.first().width, allFrames.first().height, BufferedImage.TYPE_INT_RGB)
+    starLocations.graphics!!.let { g ->
+        allFrames.forEach { f ->
+            f.stars.forEach { star ->
+                g.drawString(".", star.x, star.y)
+            }
+        }
+        g.dispose()
+    }
+
+    println("Bucketing trails...")
+
+
+    val liveTrails: MutableList<MutableList<TimestampStar>> = mutableListOf()
+    val closedTrails: MutableList<MutableList<TimestampStar>> = mutableListOf()
+
+
+
+    allFrames.forEachIndexed { frameIdx, starFrame ->
+        // trim out expired trails
+        val (newLive, newClosed) = liveTrails.partition {
+            it.last().frame >= frameIdx - TRAIL_MAX_GAP_FRAME
+        }
+        liveTrails.retainAll(newLive)
+        closedTrails += newClosed
+
+        starFrame.stars.map {
+            TimestampStar(it.x, it.y, it.lum, starFrame.ts, frameIdx) // keep track of what time it came from
+        }.sortedByDescending { it.lum } // place bright stars first
+                .forEach { tls ->
+                    val bestTrail = liveTrails.filter { trail ->
+                        trail.last().frame < tls.frame &&
+                                trail.last().distSq(tls) < STAR_MAX_HOP_PX * STAR_MAX_HOP_PX
+                    }.minBy { trail ->
+                        trail.last().distSq(tls)
+                    }
+                    bestTrail?.add(tls) ?: liveTrails.add(mutableListOf(tls))
+                }
+        println("Frame $frameIdx with live ${liveTrails.size}, closed ${closedTrails.size}")
+
+    }
+    closedTrails += liveTrails
+
+    println("Found ${closedTrails.size} potential trails...")
+
+    closedTrails.retainAll { trail ->
+        trail.size > MIN_TRAIL_STARS &&
+                trail.maxBy { it.ts }!!.ts - trail.minBy { it.ts }!!.ts > TRAIL_MIN_DURATION_MS &&
+                trail.maxBy { it.ts }!!.distSq(trail.minBy { it.ts }!!) > TRAIL_MIN_DELTA_PX * TRAIL_MIN_DELTA_PX
+    }
+
+    println("Of which ${closedTrails.size} meet the criteria...")
+
+    // Brightest by total lum, which takes into account star brightness and trail length
+    val brightestTrails = closedTrails.sortedByDescending { trail ->
+        trail.sumBy { it.lum.toInt() }
+    }.take(500)
+
+    val time0 = brightestTrails.flatMap { it }.map { it.ts }.min()!!
+    println("Winning trails: ${brightestTrails.size}")
+
+    starLocations.graphics!!.let { g ->
+        brightestTrails.forEachIndexed { i, trail ->
+            trail.forEach { star ->
+                g.drawString("↙t$i:s${star.frame}", star.x + 5, star.y)
+            }
+        }
+        g.dispose()
+    }
+    ImageIO.write(starLocations, "png", File("${System.getProperty("user.home")}${File.separator}Desktop${File.separator}allStars.png"))
+
+    File(Frame.STAR_FOLDER, "trails.tsv").printWriter().use { out ->
+        out.println("Trail Number\tOrder in Trail\tTS\tX\tY\tLum")
+        brightestTrails.forEachIndexed { trailIdx, trail ->
+            trail.forEachIndexed { tlsIdx, star ->
+                out.println(listOf(trailIdx, tlsIdx, star.ts - time0, star.x, star.y, star.lum).joinToString("\t"))
+            }
+        }
+    }
+
+
 }
 
-fun File.isImage(): Boolean = this.isFile && this.length() > 0 && setOf("png", "jpg", "jpeg", "bmp", "tif", "tiff").contains(this.extension.toLowerCase())
-fun byteAvg(vararg others: Byte): Byte = (others.map { it.toInt() and 0xFF }.sum() / others.size).toByte()
+class TimestampStar(x: Int, y: Int, lum: Short, val ts: Long, val frame: Int) : Star(x, y, lum)
