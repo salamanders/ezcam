@@ -13,6 +13,7 @@ import kotlin.system.measureTimeMillis
 class Capture(fileName: String) : SourceImage(fileName) {
 
     val stars: MutableSet<Star> = mutableSetOf()
+    val filteredStars: MutableSet<Star> = mutableSetOf()
     var rotationRadians = Double.NaN // Can't be based off of ts directly, because we don't know what time=0 is
     var rotationAnchorX = Double.NaN
     var rotationAnchorY = Double.NaN
@@ -22,11 +23,11 @@ class Capture(fileName: String) : SourceImage(fileName) {
      */
     fun getStars(): Collection<Star> {
         if (rotationRadians.isNaN()) {
-            return stars.sortedByDescending { it.lum }
+            return filteredStars.sortedByDescending { it.lum }
         }
         val cosAlpha = cos(rotationRadians)
         val sinAlpha = sin(rotationRadians)
-        return stars.sortedByDescending { it.lum }.map {
+        return filteredStars.sortedByDescending { it.lum }.map {
             val dX = it.x - rotationAnchorX
             val dY = it.y - rotationAnchorY
 
@@ -95,11 +96,11 @@ class Capture(fileName: String) : SourceImage(fileName) {
      * TODO: penalty for star brightness differences `val pctDiffLum = Math.abs((star.lum - otherStar.lum) / 255.0)`
      */
     fun starDistance(other: Capture): Double {
-        require(stars.isNotEmpty())
-        require(other.stars.isNotEmpty())
+        require(filteredStars.isNotEmpty())
+        require(other.filteredStars.isNotEmpty())
 
         val otherStarLocations = other.getStars()
-        return stars.map { thisStar ->
+        return filteredStars.map { thisStar ->
             // maybe sqrt because lots of small offsets is worse than one big offset
             otherStarLocations.map { otherStar ->
                 thisStar.distSq(otherStar)
@@ -112,6 +113,7 @@ class Capture(fileName: String) : SourceImage(fileName) {
         metadataFile.bufferedReader().use {
             val loadedCapture = SourceImage.GSON.fromJson(it, this::class.java)!!
             stars.addAll(loadedCapture.stars)
+            filteredStars.addAll(loadedCapture.filteredStars)
             rotationRadians = loadedCapture.rotationRadians
             rotationAnchorX = loadedCapture.rotationAnchorX
             rotationAnchorY = loadedCapture.rotationAnchorY

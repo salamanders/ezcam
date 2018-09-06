@@ -14,18 +14,15 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class Session {
 
-    var radiansPerMs = Double.NaN
-    var rotationAnchorX = Double.NaN
-    var rotationAnchorY = Double.NaN
+    var radiansPerMs = 0.0
+    var rotationAnchorX = 0.0
+    var rotationAnchorY = 0.0
 
     val captures by lazy {
         File(STAR_FOLDER).walk()
                 .filter { it.isFile && it.canRead() && it.length() > 0 }
-                .filter { setOf("png", "jpg", "jpeg", "bmp", "tif", "tiff").contains(it.extension.toLowerCase()) }
                 .filter { "jpg" == it.extension.toLowerCase() }
-                .sortedBy { it.nameWithoutExtension }
-                .map { it.name }
-                .map { Capture(it) }
+                .map { Capture(it.name) }
                 .onEach { it.loadMetadata() }
                 .toList()
                 .sortedBy { it.ts }
@@ -33,19 +30,29 @@ class Session {
 
     fun findAllStars() {
         println("Finding stars across ${captures.size} with background ${backgroundLight.getName()}")
-
         captures.forEach { capture ->
+            // capture.stars.clear()
             if (capture.stars.isEmpty()) {
                 capture.findStars()
                 capture.saveMetadata() // save before filtering so we can play with the filter size.
+                logToImage("allStars", capture.stars.map { star -> Pair(star.x, star.y) })
             }
         }
+    }
 
-        // Clear out isolated stars that don't have any close friends.  2x because (shrug).  `windowed` is so cool.
-        captures.windowed(3).forEach { (pre, it, post) ->
-            it.stars.removeIf { star ->
-                pre.stars.find { star.distSq(it) < 10 * 10 } == null ||
-                        post.stars.find { star.distSq(it) < 10 * 10 } == null
+    /** Clear out isolated stars that don't have any close friends. Skips first and last.  */
+    fun filterStars() {
+        println("Filtering stars")
+        captures.windowed(3).forEach { (pre, capture, post) ->
+            // capture.filteredStars.clear()
+            if (capture.filteredStars.isEmpty()) {
+                capture.filteredStars.addAll(capture.stars.filter { star ->
+                    pre.stars.find { star.distSq(it) <= Star.MINIMUM_DIST_SQ * 2 } != null &&
+                            post.stars.find { star.distSq(it) < Star.MINIMUM_DIST_SQ * 2 } != null
+                })
+                capture.saveMetadata()
+                println("Filtered from ${capture.stars.size} to ${capture.filteredStars.size}")
+                logToImage("filteredStars", capture.filteredStars.map { star -> Pair(star.x, star.y) })
             }
         }
     }
@@ -82,7 +89,7 @@ class Session {
                 val centerOfRotationX = Dimension(possibleXRange, "x")
                 val centerOfRotationY = Dimension(possibleYRange, "y")
                 val radiansPerMs = Dimension(possibleRadiansPerMsRange, "rms")
-                val threadLocalCaptures = captures.map { it.copy() } // because we are messing with internal state
+                val threadLocalCaptures = captures.map { it.copy() }.filter { it.filteredStars.isNotEmpty() } // because we are messing with internal state
 
                 // logToImage("findCenterOfRotationAndAngle", captures[3].stars.map { Pair(it.x, it.y) }, possibleXRange.start, possibleXRange.endInclusive, possibleYRange.start, possibleYRange.endInclusive)
 
@@ -104,30 +111,16 @@ class Session {
 
                 val allLocationsTried = mutableListOf<Pair<Int, Int>>()
 
-                // Freeze at first
-                radiansPerMs.current = Capture.RADIANS_PER_MS
-                radiansPerMs.setPctOfMaxStepSize(0.0)
 
-                while (sf.pctRemaining > 0.0) {
+                while (sf.iterate()) {
                     totalSteps.incrementAndGet()
-                    sf.iterate()
                     allLocationsTried.add(Pair(centerOfRotationX.current.toInt(), centerOfRotationY.current.toInt()))
                     if (sf.iterationCount % 100 == 0) {
                         println(sf)
                     }
                 }
 
-                // Float to zoom in, regular hill-climbing once temp is 0
-                radiansPerMs.setPctOfMaxStepSize(1.0)
-                centerOfRotationX.setPctOfMaxStepSize(0.1)
-                centerOfRotationY.setPctOfMaxStepSize(0.1)
-                for (i in 0..SimulatedAnnealing.MAX_ITERATIONS) {
-                    totalSteps.incrementAndGet()
-                    sf.iterate()
-                    allLocationsTried.add(Pair(centerOfRotationX.current.toInt(), centerOfRotationY.current.toInt()))
-                }
-
-                logToImage("findCenterOfRotationAndAngle_${SimulatedAnnealing.MAX_ITERATIONS}", allLocationsTried, possibleXRange.start, possibleXRange.endInclusive, possibleYRange.start, possibleYRange.endInclusive)
+                logToImage("findCenterOfRotationAndAngle", allLocationsTried, possibleXRange.start, possibleXRange.endInclusive, possibleYRange.start, possibleYRange.endInclusive)
                 println("Attempt: $attempt, center of rotation: x:${centerOfRotationX.current}, y:${centerOfRotationY.current}, rms:${radiansPerMs.current}")
                 Triple(radiansPerMs.current, centerOfRotationX.current, centerOfRotationY.current)
             }

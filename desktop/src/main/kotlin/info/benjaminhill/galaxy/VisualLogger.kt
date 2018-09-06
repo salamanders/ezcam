@@ -30,7 +30,7 @@ fun logToImage(imageName: String, pairs: Collection<Pair<Int, Int>>,
         pairs.forEach { p ->
             require(p.first in minX..maxX)
             require(p.second in minY..maxY)
-            g.fillRect(p.first - minX, p.second - minY, 4, 4)
+            g.fillRect(p.first - minX, p.second - minY, Math.max(1, (maxX - minX) / 1_000), (maxY - minY) / 1_000)
         }
         g.fillRect(pairs.last().first - minX, pairs.last().second - minY, 10, 10)
         g.dispose()
