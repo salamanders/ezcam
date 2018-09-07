@@ -4,7 +4,6 @@ import info.benjaminhill.sa.Dimension
 import info.benjaminhill.sa.SimulatedAnnealing
 import kotlinx.coroutines.experimental.async
 import kotlinx.coroutines.experimental.runBlocking
-import org.nield.kotlinstatistics.median
 import java.io.File
 import java.util.concurrent.atomic.AtomicLong
 
@@ -18,8 +17,9 @@ class Session {
     var rotationAnchorX = 0.0
     var rotationAnchorY = 0.0
 
-    val captures by lazy {
-        File(STAR_FOLDER).walk()
+    /** New list of captures every time */
+    private fun getCaptures(): List<Capture> {
+        return File(STAR_FOLDER).walk()
                 .filter { it.isFile && it.canRead() && it.length() > 0 }
                 .filter { "jpg" == it.extension.toLowerCase() }
                 .map { Capture(it.name) }
@@ -28,39 +28,29 @@ class Session {
                 .sortedBy { it.ts }
     }
 
-    fun findAllStars() {
-        println("Finding stars across ${captures.size} with background ${backgroundLight.getName()}")
-        captures.forEach { capture ->
+    /** Preps all captures for use */
+    private fun findAllStarsAndFilter(captures: Collection<Capture>): Collection<Capture> {
+        println("Finding stars across ${captures.size} with background ${backgroundLight.getName()}, then filtering")
+        val backgroundLum = backgroundLight.getLum()
+        captures.onEach { capture ->
             // capture.stars.clear()
-            if (capture.stars.isEmpty()) {
-                capture.findStars()
-                capture.saveMetadata() // save before filtering so we can play with the filter size.
-                logToImage("allStars", capture.stars.map { star -> Pair(star.x, star.y) })
+            if (capture.getStarsSize() == 0) {
+                capture.findStars(backgroundLum)
+                capture.saveMetadata() // Unchanging aspects of the capture
+                println("Located ${capture.getStarsSize()} stars.")
             }
+        }.windowed(3).onEach { (pre, capture, post) ->
+            capture.filterStars(pre, post)
         }
-    }
 
-    /** Clear out isolated stars that don't have any close friends. Skips first and last.  */
-    fun filterStars() {
-        println("Filtering stars")
-        captures.windowed(3).forEach { (pre, capture, post) ->
-            // capture.filteredStars.clear()
-            if (capture.filteredStars.isEmpty()) {
-                capture.filteredStars.addAll(capture.stars.filter { star ->
-                    pre.stars.find { star.distSq(it) <= Star.MINIMUM_DIST_SQ * 2 } != null &&
-                            post.stars.find { star.distSq(it) < Star.MINIMUM_DIST_SQ * 2 } != null
-                })
-                capture.saveMetadata()
-                println("Filtered from ${capture.stars.size} to ${capture.filteredStars.size}")
-                logToImage("filteredStars", capture.filteredStars.map { star -> Pair(star.x, star.y) })
-            }
-        }
+        return captures.filter { it.getFilteredStarsSize() > 50 }
     }
 
     private val backgroundLight: SourceImage by lazy {
         if (!File(STAR_FOLDER, "$BACKGROUND_LIGHT_NAME.png").canRead()) {
             println("Cache miss for $BACKGROUND_LIGHT_NAME")
-            captures.chunked(Math.ceil(captures.size / 15.0).toInt()).map { it.first() }.let { subset ->
+            val captures = getCaptures()
+            captures.chunked(Math.ceil(captures.size / 21.0).toInt()).map { it.first() }.let { subset ->
                 println("Getting background lum from ${subset.size} image median.")
                 WritableImage.fromMedian(subset).also {
                     it.save(BACKGROUND_LIGHT_NAME)
@@ -75,11 +65,13 @@ class Session {
         val maxAttempts = (Runtime.getRuntime().availableProcessors() - 1)
         println("Extracting star locations using $maxAttempts SA attempts.")
 
-        val width = captures.first().width
-        val height = captures.first().height
-        val possibleXRange = (-width)..(width * 2)
-        val possibleYRange = (-height)..(height * 2)
-        val possibleRadiansPerMsRange = 0.0..2 * Capture.RADIANS_PER_MS
+        val throwawayCaptures = findAllStarsAndFilter(getCaptures())
+        val width = throwawayCaptures.first().width
+        val height = throwawayCaptures.first().height
+        val ts0 = throwawayCaptures.map { it.ts }.min()!!
+        val possibleXRange = (-width * 2)..(width * 3)
+        val possibleYRange = (-height * 2)..(height * 3)
+        val possibleRadiansPerMsRange = 0.5 * Capture.RADIANS_PER_MS..1.5 * Capture.RADIANS_PER_MS
         val totalSteps = AtomicLong(0)
 
         val deferred = (1..maxAttempts).map { attempt ->
@@ -88,29 +80,38 @@ class Session {
                 // Possible bounds are 1x more in any direction
                 val centerOfRotationX = Dimension(possibleXRange, "x")
                 val centerOfRotationY = Dimension(possibleYRange, "y")
-                val radiansPerMs = Dimension(possibleRadiansPerMsRange, "rms")
-                val threadLocalCaptures = captures.map { it.copy() }.filter { it.filteredStars.isNotEmpty() } // because we are messing with internal state
+                val radiansPerMs = Dimension(possibleRadiansPerMsRange, "rpms")
 
+                // because we are messing with internal state
+                val threadLocalCaptures = findAllStarsAndFilter(getCaptures())
                 // logToImage("findCenterOfRotationAndAngle", captures[3].stars.map { Pair(it.x, it.y) }, possibleXRange.start, possibleXRange.endInclusive, possibleYRange.start, possibleYRange.endInclusive)
 
                 val sf = SimulatedAnnealing(centerOfRotationX, centerOfRotationY, radiansPerMs) {
-                    threadLocalCaptures.windowed(7).sumByDouble { caps ->
-                        // Set the candidate rotation anchor, and the offset-from-middle rotation amounts
-                        caps.forEach { cap ->
-                            cap.rotationAnchorX = centerOfRotationX.candidate
-                            cap.rotationAnchorY = centerOfRotationY.candidate
-                            cap.rotationRadians = if (cap.ts == caps[3].ts) Double.NaN else radiansPerMs.candidate * (cap.ts - caps[3].ts)
-                        }
 
-                        caps[3].starDistance(caps[0]) +
-                                caps[3].starDistance(caps[2]) +
-                                caps[3].starDistance(caps[4]) +
-                                caps[3].starDistance(caps[6])
+                    threadLocalCaptures.forEach { cap ->
+                        cap.updateVirtualStarLocations(
+                                centerOfRotationX.candidate,
+                                centerOfRotationY.candidate,
+                                radiansPerMs.candidate,
+                                ts0
+                        )
                     }
+
+                    val numberOfSamples = 15
+                    val windows = threadLocalCaptures.windowed(7)
+                    windows.chunked(windows.size / numberOfSamples).map { it.first() }
+                            .sumByDouble { caps ->
+                                caps[3].starDistance(caps[0]) +
+                                        caps[3].starDistance(caps[2]) +
+                                        caps[3].starDistance(caps[4]) +
+                                        caps[3].starDistance(caps[6])
+                            }
                 }
 
-                val allLocationsTried = mutableListOf<Pair<Int, Int>>()
+                //sf.render2DErrorFunction()
 
+
+                val allLocationsTried = mutableListOf<Pair<Int, Int>>()
 
                 while (sf.iterate()) {
                     totalSteps.incrementAndGet()
@@ -121,39 +122,45 @@ class Session {
                 }
 
                 logToImage("findCenterOfRotationAndAngle", allLocationsTried, possibleXRange.start, possibleXRange.endInclusive, possibleYRange.start, possibleYRange.endInclusive)
-                println("Attempt: $attempt, center of rotation: x:${centerOfRotationX.current}, y:${centerOfRotationY.current}, rms:${radiansPerMs.current}")
-                Triple(radiansPerMs.current, centerOfRotationX.current, centerOfRotationY.current)
+                println("Attempt Results: $attempt, center of rotation: x:${centerOfRotationX.current}, y:${centerOfRotationY.current}, rms:${radiansPerMs.current}")
+
+                sf
             }
         }
-        val allRadPerMs = mutableListOf<Double>()
-        val allX = mutableListOf<Double>()
-        val allY = mutableListOf<Double>()
+        val solutions = mutableListOf<SimulatedAnnealing>()
+
+        println("Launching parallel SA")
         runBlocking {
             deferred.forEach {
-                val (radPerMs, x, y) = it.await()
-                allRadPerMs.add(radPerMs)
-                allX.add(x)
-                allY.add(y)
+                solutions.add(it.await())
             }
             println("Total Steps: ${totalSteps.get()}")
         }
-        radiansPerMs = allRadPerMs.median()
-        rotationAnchorX = allX.median()
-        rotationAnchorY = allY.median()
+
+        val bestSA = solutions.minBy { it.currentError }!!
+        println("Best SA has an error ${bestSA.currentError}")
+
+        rotationAnchorX = bestSA.getCurrent("x")
+        rotationAnchorY = bestSA.getCurrent("y")
+        radiansPerMs = bestSA.getCurrent("rpms")
     }
 
     fun renderStacked() {
+        val captures = getCaptures()
         val i0 = captures.size / 2
-        val someCaptures = captures.slice(i0 - 40..i0 + 40)
-        val t0 = someCaptures[someCaptures.size / 2].ts
-        someCaptures.forEach { cap ->
-            cap.rotationAnchorX = rotationAnchorX
-            cap.rotationAnchorY = rotationAnchorY
-            cap.rotationRadians = (cap.ts - t0) * radiansPerMs
+        listOf(5, 10, 40, 100).forEach { imagesUsed ->
+            val someCaptures = captures.slice(Math.max(0, i0 - imagesUsed / 2)..Math.min(captures.size, i0 + imagesUsed / 2))
+            val t0 = someCaptures[someCaptures.size / 2].ts
+            someCaptures.forEach { cap ->
+                cap.rotationAnchorX = rotationAnchorX
+                cap.rotationAnchorY = rotationAnchorY
+                cap.rotationRadians = (cap.ts - t0) * radiansPerMs
+            }
+            listOf(5, 10, 20, 40).forEach { mult ->
+                WritableImage.fromSum(someCaptures, backgroundLight, mult.toDouble()).save("fromSum_${someCaptures.size}_${mult}_$imagesUsed")
+            }
         }
-        WritableImage.fromSum(someCaptures, backgroundLight, 20.0).save("fromSum${someCaptures.size}_20")
-        //WritableImage.fromMaxLum(someCaptures).save("fromMaxLum${someCaptures.size}" )
-        //WritableImage.fromMedian(someCaptures).save("fromMedian${someCaptures.size}")
+
     }
 
     companion object {

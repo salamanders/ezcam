@@ -25,14 +25,17 @@ fun logToImage(imageName: String, pairs: Collection<Pair<Int, Int>>,
         BufferedImage(maxX - minX, maxY - minY, BufferedImage.TYPE_INT_RGB)
     }
 
+    val pixelSizeW = Math.max(1, (maxX - minX) / 1_000)
+    val pixelSizeH = Math.max(1, (maxY - minY) / 1_000)
+
     debugImage.createGraphics()!!.let { g ->
         g.color = Color.getHSBColor(ThreadLocalRandom.current().nextFloat(), 1.0f, 1.0f)
         pairs.forEach { p ->
             require(p.first in minX..maxX)
             require(p.second in minY..maxY)
-            g.fillRect(p.first - minX, p.second - minY, Math.max(1, (maxX - minX) / 1_000), (maxY - minY) / 1_000)
+            g.fillRect(p.first - minX, p.second - minY, pixelSizeW, pixelSizeH)
         }
-        g.fillRect(pairs.last().first - minX, pairs.last().second - minY, 10, 10)
+        g.fillRect(pairs.last().first - minX, pairs.last().second - minY, pixelSizeW * 3, pixelSizeH * 3)
         g.dispose()
     }
     ImageIO.write(debugImage, "png", debugImageFile)

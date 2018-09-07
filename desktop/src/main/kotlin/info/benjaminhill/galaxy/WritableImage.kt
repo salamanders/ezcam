@@ -50,7 +50,7 @@ class WritableImage(private val destinationName: String, private val width: Int,
          */
         fun fromSum(others: Collection<Capture>, backgroundLight: SourceImage, multiplier: Double = 5.0): WritableImage {
             require(others.isNotEmpty())
-            println("Generating fromSum from ${others.size}")
+            println("Generating fromSum from ${others.size} multiplier:$multiplier")
             val wi = WritableImage("sum", others.first().width, others.first().height)
             val size = wi.red.size
             val backgroundColorBytes = backgroundLight.getColorData()
