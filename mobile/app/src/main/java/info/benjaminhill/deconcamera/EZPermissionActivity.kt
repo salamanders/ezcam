@@ -70,6 +70,7 @@ abstract class EZPermissionActivity : AppCompatActivity() {
 
     private val missingPermissions
         get() = requiredPermissions
+                .asSequence()
                 .filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
                 .toSet()
 

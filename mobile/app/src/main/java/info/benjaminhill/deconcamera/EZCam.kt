@@ -28,7 +28,8 @@ import kotlin.coroutines.experimental.suspendCoroutine
 @SuppressLint("MissingPermission")
 /**
  * camera2 API deconstructed - done through lazy loads
- * Wrap calls in `launch(UI) { cam.takePicture() }`
+ * Wrap calls in `GlobalScope.launch(Dispatchers.Main) { cam.takePicture() }`
+ * from https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/launch.html
  */
 class EZCam(private val context: Activity, private val previewTextureView: TextureView) {
 
@@ -223,8 +224,10 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
                 ?: 0.0f.also {
                     Log.w(TAG, "Hyperfocal distance not available")
                 }
-        setCaptureSetting(CaptureRequest.LENS_FOCUS_DISTANCE, hyperfocalDistance)
-        Log.i(TAG, "Set focus to hyperfocal diopters: $hyperfocalDistance")
+
+        // ➗2 because I think it might help hedging towards infinity
+        setCaptureSetting(CaptureRequest.LENS_FOCUS_DISTANCE, hyperfocalDistance / 2) //
+        Log.i(TAG, "Set focus to hyperfocal diopters: $hyperfocalDistance / 2")
     }
 
 
