@@ -4,7 +4,6 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
@@ -13,7 +12,7 @@ import androidx.core.content.ContextCompat
  * before diving into the onResume: `if (!hasAllRequiredPermissions()) { complain loudly and bail }`
  *
  */
-abstract class EZPermissionActivity : AppCompatActivity() {
+abstract class EZPermissionActivity : ScopedAppActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

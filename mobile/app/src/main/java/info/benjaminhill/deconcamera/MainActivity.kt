@@ -1,5 +1,6 @@
 package info.benjaminhill.deconcamera
 
+import android.annotation.SuppressLint
 import android.hardware.camera2.CaptureRequest
 import android.os.Bundle
 import android.util.Log
@@ -19,6 +20,7 @@ class MainActivity : EZPermissionActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
+    @SuppressLint("MissingPermission")
     override fun onResume() {
         super.onResume()
         if (!hasAllRequiredPermissions()) {
@@ -26,8 +28,7 @@ class MainActivity : EZPermissionActivity() {
             return
         }
 
-
-        GlobalScope.launch(Dispatchers.Main) {
+        launch {
             cam = EZCam(this@MainActivity, textureView)
 
             cam.setCaptureSetting(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_HIGH_QUALITY)
@@ -61,7 +62,6 @@ class MainActivity : EZPermissionActivity() {
             }
         }
     }
-
 
     override fun onPause() {
         super.onPause()

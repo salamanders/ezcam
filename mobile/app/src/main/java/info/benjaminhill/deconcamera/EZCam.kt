@@ -18,9 +18,11 @@ import android.util.Log
 import android.util.Size
 import android.view.Surface
 import android.view.TextureView
+import androidx.annotation.RequiresPermission
 import androidx.core.app.ActivityCompat
+import kotlinx.coroutines.experimental.Dispatchers
+import kotlinx.coroutines.experimental.withContext
 import java.io.File
-import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.coroutines.experimental.suspendCoroutine
@@ -28,10 +30,14 @@ import kotlin.coroutines.experimental.suspendCoroutine
 @SuppressLint("MissingPermission")
 /**
  * camera2 API deconstructed - done through lazy loads
- * Wrap calls in `GlobalScope.launch(Dispatchers.Main) { cam.takePicture() }`
+ * To use, parent class should extend CoroutineScope
+ * see https://github.com/Kotlin/kotlinx.coroutines/blob/master/ui/coroutines-guide-ui.md
+ * Then wrap calls in `launch { cam.takePicture() }`
  * from https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/launch.html
  */
-class EZCam(private val context: Activity, private val previewTextureView: TextureView) {
+class EZCam
+@RequiresPermission(allOf = [Manifest.permission.CAMERA, Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE])
+constructor(private val context: Activity, private val previewTextureView: TextureView) {
 
     /** The surface that the preview gets drawn on */
     private val previewSurface = LazySuspend {
@@ -43,6 +49,7 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
         } else {
             suspendCoroutine { cont ->
                 previewTextureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                    @SuppressLint("Recycle")
                     override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
                         cont.resume(Surface(surfaceTexture).also {
                             Log.i(TAG, "Created previewSurface through a surfaceTextureListener")
@@ -158,16 +165,16 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
 
     /** Back beats everything */
     private val bestCameraId: String by lazy {
-        cameraManager.cameraIdList.filterNotNull().maxBy { cameraId ->
+        val cameraId = cameraManager.cameraIdList.filterNotNull().maxBy { cameraId ->
             when (cameraManager.getCameraCharacteristics(cameraId).get(CameraCharacteristics.LENS_FACING)) {
                 CameraCharacteristics.LENS_FACING_BACK -> 3
                 CameraCharacteristics.LENS_FACING_FRONT -> 2
                 CameraCharacteristics.LENS_FACING_EXTERNAL -> 1
                 else -> 0
             }
-        }!!.also {
-            Log.i(TAG, "bestCameraId:created $it")
-        }
+        } ?: throw NoSuchElementException("Unable to find camera")
+        Log.i(TAG, "bestCameraId:created $cameraId")
+        cameraId
     }
 
     private val backgroundThread: HandlerThread by lazy {
@@ -196,7 +203,9 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
                     Environment.DIRECTORY_DCIM), "/Camera/" + EZCam.TAG)
             albumFolder.mkdirs()
             val imageFile = File(albumFolder, "image_${SDF.format(Date())}.jpg")
-            saveImage(imageReaderJPEG.acquireLatestImage(), imageFile)
+            imageReaderJPEG.acquireLatestImage().use { image ->
+                saveImage(image, imageFile)
+            }
 
             MediaScannerConnection.scanFile(context, arrayOf(imageFile.toString()), arrayOf("image/jpeg")) { filePath, u ->
                 Log.i(EZCam.TAG, "scanFile finished $filePath $u")
@@ -207,25 +216,25 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
     /**
      * Set CaptureRequest parameters e.g. setCaptureSetting(CaptureRequest.LENS_FOCUS_DISTANCE, 0.0f)
      */
-    suspend fun <T> setCaptureSetting(key: CaptureRequest.Key<T>, value: T) {
+    suspend fun <T> setCaptureSetting(key: CaptureRequest.Key<T>, value: T) = withContext(Dispatchers.Default) {
         // captureRequestBuilderForPreview().set(key, value) Long exposure makes preview sad
         captureRequestBuilderForImageReader().set(key, value)
     }
 
-    suspend fun setCaptureSettingMaxExposure() {
+    suspend fun setCaptureSettingMaxExposure() = withContext(Dispatchers.Default) {
         cameraCharacteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)?.upper?.let { maxExposure ->
             setCaptureSetting(CaptureRequest.SENSOR_EXPOSURE_TIME, maxExposure)
             Log.i(TAG, "Set exposure to max ${maxExposure / 1_000_000_000.0} seconds")
         }
     }
 
-    suspend fun setFocusDistanceMax() {
+    suspend fun setFocusDistanceMax() = withContext(Dispatchers.Default) {
         val hyperfocalDistance = cameraCharacteristics.get(CameraCharacteristics.LENS_INFO_HYPERFOCAL_DISTANCE)
                 ?: 0.0f.also {
                     Log.w(TAG, "Hyperfocal distance not available")
                 }
 
-        // ➗2 because I think it might help hedging towards infinity
+        // div 2 because I think it might help hedging towards infinity
         setCaptureSetting(CaptureRequest.LENS_FOCUS_DISTANCE, hyperfocalDistance / 2) //
         Log.i(TAG, "Set focus to hyperfocal diopters: $hyperfocalDistance / 2")
     }
@@ -234,7 +243,7 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
     /**
      * start the preview, rebuilding the preview request each time
      */
-    suspend fun startPreview() {
+    suspend fun startPreview() = withContext(Dispatchers.Default) {
         Log.d(TAG, "EZCam.startPreview:start")
         cameraCaptureSession().setRepeatingRequest(captureRequestBuilderForPreview().build(), null, backgroundHandler)
         Log.d(TAG, "EZCam.startPreview:end")
@@ -243,14 +252,15 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
     /**
      * stop the preview
      */
-    suspend fun stopPreview() {
+    suspend fun stopPreview() = withContext(Dispatchers.Default) {
+        Log.d(TAG, "EZCam.stopPreview (stops repeating capture session)")
         cameraCaptureSession().stopRepeating()
     }
 
     /**
      * close the camera definitively
      */
-    suspend fun close() {
+    suspend fun close() = withContext(Dispatchers.Default) {
         cameraDevice().close()
         previewSurface().release()
         stopBackgroundThread()
@@ -259,7 +269,7 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
     /**
      * take just one picture
      */
-    suspend fun takePicture() {
+    suspend fun takePicture() = withContext(Dispatchers.Default) {
         captureRequestBuilderForImageReader().set(CaptureRequest.JPEG_ORIENTATION, cameraCharacteristics.get(CameraCharacteristics.SENSOR_ORIENTATION))
         cameraCaptureSession().capture(captureRequestBuilderForImageReader().build(), null, backgroundHandler)
     }
@@ -288,10 +298,7 @@ class EZCam(private val context: Activity, private val previewTextureView: Textu
             val buffer = image.planes[0].buffer!!
             val bytes = ByteArray(buffer.remaining())
             buffer.get(bytes)
-            val output = FileOutputStream(file)
-            output.write(bytes)
-            image.close()
-            output.close()
+            file.writeBytes(bytes)
             Log.i(EZCam.TAG, "Finished writing image to $file: ${file.length()}")
         }
     }
