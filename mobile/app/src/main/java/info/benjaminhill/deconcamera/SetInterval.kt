@@ -1,7 +1,8 @@
 package info.benjaminhill.deconcamera
 
 import android.os.Handler
-import android.util.Log
+import timber.log.Timber
+
 
 /** Repeating callback that starts in a running state */
 class SetInterval(private val delayMs: Long = 1_000L, action: () -> Unit) {
@@ -9,7 +10,7 @@ class SetInterval(private val delayMs: Long = 1_000L, action: () -> Unit) {
 
     private val internalRunnable = object : Runnable {
         override fun run() {
-            Log.i(MainActivity.TAG, "SetInterval.run")
+            Timber.i("SetInterval.run")
             handler.postDelayed(this, delayMs) // does not depend on how long the action takes
             action()
         }
@@ -20,7 +21,7 @@ class SetInterval(private val delayMs: Long = 1_000L, action: () -> Unit) {
     }
 
     fun stop() {
-        Log.i(MainActivity.TAG, "SetInterval.stop")
+        Timber.i("SetInterval.stop")
         handler.removeCallbacks(internalRunnable)
     }
 }

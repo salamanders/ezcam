@@ -9,7 +9,7 @@ import kotlinx.coroutines.experimental.android.Main
 import kotlin.coroutines.experimental.CoroutineContext
 
 abstract class ScopedAppActivity : AppCompatActivity(), CoroutineScope {
-    protected lateinit var job: Job
+    private lateinit var job: Job
     override val coroutineContext: CoroutineContext
         get() = job + Dispatchers.Main
 
