@@ -1,4 +1,4 @@
-package info.benjaminhill.deconcamera
+package info.benjaminhill.ezcam
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -21,11 +21,11 @@ import androidx.annotation.RequiresPermission
 import androidx.core.app.ActivityCompat
 import kotlinx.coroutines.experimental.Dispatchers
 import kotlinx.coroutines.experimental.withContext
-import timber.log.Timber
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.coroutines.experimental.suspendCoroutine
+import com.github.ajalt.timberkt.*
 
 @SuppressLint("MissingPermission")
 /**
@@ -41,10 +41,10 @@ constructor(private val context: Activity, private val previewTextureView: Textu
 
     /** The surface that the preview gets drawn on */
     private val previewSurface = LazySuspend {
-        Timber.d("EZCam.previewSurface:start")
+        d { "EZCam.previewSurface:start" }
         if (previewTextureView.isAvailable) {
             Surface(previewTextureView.surfaceTexture).also {
-                Timber.i("Created previewSurface directly")
+                i {"Created previewSurface directly" }
             }
         } else {
             suspendCoroutine { cont ->
@@ -52,7 +52,7 @@ constructor(private val context: Activity, private val previewTextureView: Textu
                     @SuppressLint("Recycle")
                     override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
                         cont.resume(Surface(surfaceTexture).also {
-                            Timber.i("Created previewSurface through a surfaceTextureListener")
+                            i{"Created previewSurface through a surfaceTextureListener" }
                         })
                     }
 
@@ -69,29 +69,29 @@ constructor(private val context: Activity, private val previewTextureView: Textu
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             throw IllegalStateException("You don't have the required permissions to open the camera, try guarding with EZPermission.")
         }
-        Timber.d("cameraManager.openCamera onOpened, cameraDevice is now ready.")
+        d { "cameraManager.openCamera onOpened, cameraDevice is now ready." }
         suspendCoroutine { cont ->
             cameraManager.openCamera(bestCameraId, object : CameraDevice.StateCallback() {
                 override fun onOpened(camera: CameraDevice) = cont.resume(camera).also {
-                    Timber.i("cameraManager.openCamera onOpened, cameraDevice is now ready.")
+                    i { "cameraManager.openCamera onOpened, cameraDevice is now ready." }
                 }
 
                 override fun onDisconnected(camera: CameraDevice) = cont.resumeWithException(Exception("Problem with cameraManager.openCamera onDisconnected")).also {
-                    Timber.w("camera onDisconnected: Camera device is no longer available for use.")
+                    w { "camera onDisconnected: Camera device is no longer available for use." }
                 }
 
                 override fun onError(camera: CameraDevice, error: Int) {
                     when (error) {
-                        CameraDevice.StateCallback.ERROR_CAMERA_DEVICE -> Timber.w("CameraDevice.StateCallback: Camera device has encountered a fatal error.")
-                        CameraDevice.StateCallback.ERROR_CAMERA_DISABLED -> Timber.w("CameraDevice.StateCallback: Camera device could not be opened due to a device policy.")
-                        CameraDevice.StateCallback.ERROR_CAMERA_IN_USE -> Timber.w("CameraDevice.StateCallback: Camera device is in use already.")
-                        CameraDevice.StateCallback.ERROR_CAMERA_SERVICE -> Timber.w("CameraDevice.StateCallback: Camera service has encountered a fatal error.")
-                        CameraDevice.StateCallback.ERROR_MAX_CAMERAS_IN_USE -> Timber.w("CameraDevice.StateCallback: Camera device could not be opened because there are too many other open camera devices.")
+                        ERROR_CAMERA_DEVICE -> w { "CameraDevice.StateCallback: Camera device has encountered a fatal error." }
+                        ERROR_CAMERA_DISABLED -> w { "CameraDevice.StateCallback: Camera device could not be opened due to a device policy." }
+                        ERROR_CAMERA_IN_USE -> w { "CameraDevice.StateCallback: Camera device is in use already." }
+                        ERROR_CAMERA_SERVICE -> w { "CameraDevice.StateCallback: Camera service has encountered a fatal error." }
+                        ERROR_MAX_CAMERAS_IN_USE -> w { "CameraDevice.StateCallback: Camera device could not be opened because there are too many other open camera devices." }
                     }
                     try {
                         cont.resumeWithException(Exception("openCamera onError $error"))
                     } catch (e: IllegalStateException) {
-                        Timber.w("Swallowing resumeWithException because not the first resume.")
+                        w { "Swallowing resumeWithException because not the first resume." }
                     }
 
                 }
@@ -102,18 +102,18 @@ constructor(private val context: Activity, private val previewTextureView: Textu
 
     /** A fully configured capture session */
     private val cameraCaptureSession = LazySuspend<CameraCaptureSession> {
-        Timber.d("EZCam.cameraCaptureSession:start")
+        d { "EZCam.cameraCaptureSession:start" }
         val cd = cameraDevice()
         val rs = previewSurface()
         suspendCoroutine { cont ->
             cd.createCaptureSession(Arrays.asList(rs, imageReaderJPEG.surface), object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(session: CameraCaptureSession) = cont.resume(session).also {
-                    Timber.i("Created cameraCaptureSession through createCaptureSession.onConfigured")
+                    i { "Created cameraCaptureSession through createCaptureSession.onConfigured" }
                 }
 
                 override fun onConfigureFailed(session: CameraCaptureSession) {
                     val e = Exception("createCaptureSession.onConfigureFailed")
-                    Timber.e(e, "onConfigureFailed: Could not configure capture session.")
+                    Timber.e(e) {"onConfigureFailed: Could not configure capture session." }
                     cont.resumeWithException(e)
                 }
             }, backgroundHandler)
@@ -124,7 +124,7 @@ constructor(private val context: Activity, private val previewTextureView: Textu
     private val captureRequestBuilderForPreview = LazySuspend<CaptureRequest.Builder> {
         cameraDevice().createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).also {
             it.addTarget(previewSurface())
-            Timber.i("captureRequestBuilderForPreview:created")
+            i { "captureRequestBuilderForPreview:created" }
         }
     }
 
@@ -133,13 +133,13 @@ constructor(private val context: Activity, private val previewTextureView: Textu
     private val captureRequestBuilderForImageReader = LazySuspend<CaptureRequest.Builder> {
         cameraDevice().createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).also {
             it.addTarget(imageReaderJPEG.surface)
-            Timber.i("captureRequestBuilderForImageReader:created")
+            i { "captureRequestBuilderForImageReader:created" }
         }
     }
 
     private val cameraManager: CameraManager by lazy {
         context.getSystemService(Context.CAMERA_SERVICE).also {
-            Timber.i("cameraManager:created")
+            i { "cameraManager:created" }
         } as CameraManager
     }
 
@@ -147,13 +147,13 @@ constructor(private val context: Activity, private val previewTextureView: Textu
         cameraCharacteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!.getOutputSizes(ImageFormat.JPEG).maxBy {
             it.width * it.height
         }!!.also {
-            Timber.i("Found max size for the camera JPEG: $it")
+            i { "Found max size for the camera JPEG: $it" }
         }
     }
 
     private val cameraCharacteristics: CameraCharacteristics by lazy {
         cameraManager.getCameraCharacteristics(bestCameraId).also {
-            Timber.i("cameraCharacteristics:created for camera $bestCameraId")
+            i { "cameraCharacteristics:created for camera $bestCameraId" }
         }
     }
 
@@ -161,7 +161,7 @@ constructor(private val context: Activity, private val previewTextureView: Textu
         // TODO: Previews should be smaller res
         ImageReader.newInstance(imageSizeForImageReader.width, imageSizeForImageReader.height, ImageFormat.JPEG, 3).also {
             it.setOnImageAvailableListener(onImageAvailableForImageReader, backgroundHandler)
-            Timber.i("imageReaderJPEG:created maxImages ${it.maxImages}, registered onImageAvailableForImageReader")
+            i { "imageReaderJPEG:created maxImages ${it.maxImages}, registered onImageAvailableForImageReader" }
         }
     }
 
@@ -175,34 +175,34 @@ constructor(private val context: Activity, private val previewTextureView: Textu
                 else -> 0
             }
         } ?: throw NoSuchElementException("Unable to find camera")
-        Timber.i("bestCameraId:created $cameraId")
+        i { "bestCameraId:created $cameraId" }
         cameraId
     }
 
     private val backgroundThread: HandlerThread by lazy {
         HandlerThread("EZCam").also {
             it.start()
-            Timber.i("backgroundThread:created (and started)")
+            i { "backgroundThread:created (and started)" }
         }
     }
 
     private val backgroundHandler: Handler by lazy {
         Handler(backgroundThread.looper).also {
-            Timber.i("backgroundHandler:created")
+            i { "backgroundHandler:created" }
         }
     }
 
     /** Write full image captures to disk */
     private val onImageAvailableForImageReader by lazy {
         ImageReader.OnImageAvailableListener {
-            Timber.i("onImageAvailableForImageReader")
+            i { "onImageAvailableForImageReader" }
 
             if (ActivityCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
                 throw IllegalStateException("You don't have the required permission WRITE_EXTERNAL_STORAGE, try guarding with EZPermission.")
             }
 
             val albumFolder = File(Environment.getExternalStoragePublicDirectory(
-                    Environment.DIRECTORY_DCIM), "/Camera/decon")
+                    Environment.DIRECTORY_DCIM), "/Camera/ezcam")
             albumFolder.mkdirs()
             val imageFile = File(albumFolder, "image_${SDF.format(Date())}.jpg")
             imageReaderJPEG.acquireLatestImage().use { image ->
@@ -210,7 +210,7 @@ constructor(private val context: Activity, private val previewTextureView: Textu
             }
 
             MediaScannerConnection.scanFile(context, arrayOf(imageFile.toString()), arrayOf("image/jpeg")) { filePath, u ->
-                Timber.i("scanFile finished $filePath $u")
+                i { "scanFile finished $filePath $u" }
             }
         }
     }
@@ -226,19 +226,19 @@ constructor(private val context: Activity, private val previewTextureView: Textu
     suspend fun setCaptureSettingMaxExposure() = withContext(Dispatchers.Default) {
         cameraCharacteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)?.upper?.let { maxExposure ->
             setCaptureSetting(CaptureRequest.SENSOR_EXPOSURE_TIME, maxExposure)
-            Timber.i("Set exposure to max ${maxExposure / 1_000_000_000.0} seconds")
+            i { "Set exposure to max ${maxExposure / 1_000_000_000.0} seconds" }
         }
     }
 
     suspend fun setFocusDistanceMax() = withContext(Dispatchers.Default) {
         val hyperfocalDistance = cameraCharacteristics.get(CameraCharacteristics.LENS_INFO_HYPERFOCAL_DISTANCE)
                 ?: 0.0f.also {
-                    Timber.w("Hyperfocal distance not available")
+                    w { "Hyperfocal distance not available" }
                 }
 
         // div 2 because I think it might help hedging towards infinity
         setCaptureSetting(CaptureRequest.LENS_FOCUS_DISTANCE, hyperfocalDistance / 2) //
-        Timber.i("Set focus to hyperfocal diopters: $hyperfocalDistance / 2")
+        i { "Set focus to hyperfocal diopters: $hyperfocalDistance / 2" }
     }
 
 
@@ -246,16 +246,16 @@ constructor(private val context: Activity, private val previewTextureView: Textu
      * start the preview, rebuilding the preview request each time
      */
     suspend fun startPreview() = withContext(Dispatchers.Default) {
-        Timber.d("EZCam.startPreview:start")
+        d { "EZCam.startPreview:start" }
         cameraCaptureSession().setRepeatingRequest(captureRequestBuilderForPreview().build(), null, backgroundHandler)
-        Timber.d("EZCam.startPreview:end")
+        d { "EZCam.startPreview:end" }
     }
 
     /**
      * stop the preview
      */
     suspend fun stopPreview() = withContext(Dispatchers.Default) {
-        Timber.d("EZCam.stopPreview (stops repeating capture session)")
+        d { "EZCam.stopPreview (stops repeating capture session)" }
         cameraCaptureSession().stopRepeating()
     }
 
@@ -281,7 +281,7 @@ constructor(private val context: Activity, private val previewTextureView: Textu
         try {
             backgroundThread.join()
         } catch (e: InterruptedException) {
-            Timber.e(e, "stopBackgroundThread error waiting for background thread")
+            Timber.e(e) { "stopBackgroundThread error waiting for background thread" }
         }
     }
 
@@ -300,7 +300,7 @@ constructor(private val context: Activity, private val previewTextureView: Textu
             val bytes = ByteArray(buffer.remaining())
             buffer.get(bytes)
             file.writeBytes(bytes)
-            Timber.i("Finished writing image to $file: ${file.length()}")
+            i { "Finished writing image to $file: ${file.length()}" }
         }
     }
 }

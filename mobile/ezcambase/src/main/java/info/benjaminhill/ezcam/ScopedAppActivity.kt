@@ -1,4 +1,4 @@
-package info.benjaminhill.deconcamera
+package info.benjaminhill.ezcam
 
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity

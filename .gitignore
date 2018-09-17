@@ -325,3 +325,6 @@ desktop/.idea/vcs.xml
 desktop/.idea/workspace.xml
 desktop/SCRATCH.txt
 mobile/.idea/caches/build_file_checksums.ser
+mobile/gradlew.bat
+mobile/gradlew
+mobile/gradle/wrapper/gradle-wrapper.properties

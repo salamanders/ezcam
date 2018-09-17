@@ -1,4 +1,4 @@
-package info.benjaminhill.deconcamera
+package info.benjaminhill.ezcam
 
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -6,7 +6,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import timber.log.Timber
+import com.github.ajalt.timberkt.*
 
 /**
  * Work out the dangerous permissions listed in the AndroidManifest.xml (dynamically)
@@ -22,7 +22,7 @@ abstract class EZPermissionActivity : ScopedAppActivity() {
         val baseUEH = Thread.getDefaultUncaughtExceptionHandler()!!
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
             // this may double log the error on older versions of android
-            Timber.w("FATAL EXCEPTION: ${thread.name} $error")
+            w { "FATAL EXCEPTION: ${thread.name} $error" }
             baseUEH.uncaughtException(thread, error)
             throw error
         }
@@ -35,10 +35,10 @@ abstract class EZPermissionActivity : ScopedAppActivity() {
         super.onStart()
 
         if (hasAllRequiredPermissions()) {
-            Timber.w("We already have all the permissions we needed, no need to get involved")
+            w { "We already have all the permissions we needed, no need to get involved" }
         } else {
             // This is a prototype so we skip the right way to do permissions (with reasons given first, fallback plan, etc)
-            Timber.w("Requesting permissions, be back soon.")
+            w { "Requesting permissions, be back soon." }
             logPermissions()
             ActivityCompat.requestPermissions(this, missingPermissions.toTypedArray(), SIMPLE_PERMISSION_ID)
         }
@@ -46,12 +46,12 @@ abstract class EZPermissionActivity : ScopedAppActivity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, grantPermissions: Array<out String>, grantResults: IntArray) {
         if (requestCode == SIMPLE_PERMISSION_ID) {
-            Timber.w("Permission grant result: ${grantPermissions.joinToString()}=${grantResults.joinToString()}")
+            w { "Permission grant result: ${grantPermissions.joinToString()}=${grantResults.joinToString()}" }
             logPermissions()
             if (hasAllRequiredPermissions()) {
-                Timber.w("User granted all permissions that we requested, the next onResume should work")
+                w { "User granted all permissions that we requested, the next onResume should work" }
             } else {
-                Timber.w("User declined required permissions: ${missingPermissions.joinToString()}")
+                w { "User declined required permissions: ${missingPermissions.joinToString()}" }
                 Toast.makeText(this, "Please restart the app after allowing access to: ${missingPermissions.joinToString()}", Toast.LENGTH_LONG).show()
             }
         } else {
@@ -60,7 +60,7 @@ abstract class EZPermissionActivity : ScopedAppActivity() {
     }
 
     private fun logPermissions() = requiredPermissions.forEach {
-        Timber.w("Permission: $it; missing: ${it in missingPermissions}")
+        w { "Permission: $it; missing: ${it in missingPermissions}" }
     }
 
     private val requiredPermissions

@@ -1,22 +1,26 @@
-package info.benjaminhill.deconcamera
+package info.benjaminhill.galaxyfinder
 
 import android.annotation.SuppressLint
 import android.hardware.camera2.CaptureRequest
 import android.os.Bundle
 
 import android.view.WindowManager
+import info.benjaminhill.ezcam.EZCam
+import info.benjaminhill.ezcam.EZPermissionActivity
 import kotlinx.android.synthetic.main.activity_main.*
 import kotlinx.coroutines.experimental.Dispatchers
 import kotlinx.coroutines.experimental.GlobalScope
 import kotlinx.coroutines.experimental.android.Main
 import kotlinx.coroutines.experimental.launch
-import timber.log.Timber
+import com.github.ajalt.timberkt.*
+
 
 class MainActivity : EZPermissionActivity() {
     private lateinit var cam: EZCam
     private lateinit var lotsOfPictures: SetInterval
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Timber.plant(Timber.DebugTree())
         setContentView(R.layout.activity_main)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
@@ -25,7 +29,7 @@ class MainActivity : EZPermissionActivity() {
     override fun onResume() {
         super.onResume()
         if (!hasAllRequiredPermissions()) {
-            Timber.w("Halted onResume because don't yet have the required permissions.")
+            w { "Halted onResume because don't yet have the required permissions." }
             return
         }
 
@@ -52,9 +56,9 @@ class MainActivity : EZPermissionActivity() {
             cam.setCaptureSetting(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
             cam.setFocusDistanceMax()
 
-            Timber.i("Finished construction, now starting preview.")
+            i { "Finished construction, now starting preview." }
             cam.startPreview()
-            Timber.i("Finished starting preview")
+            i { "Finished starting preview" }
 
             lotsOfPictures = SetInterval(5_000) {
                 GlobalScope.launch(Dispatchers.Main) {
@@ -66,18 +70,25 @@ class MainActivity : EZPermissionActivity() {
 
     override fun onPause() {
         super.onPause()
-        Timber.i("onPause - EZCam.stopPreview")
+        i { "onPause - EZCam.stopPreview" }
         GlobalScope.launch(Dispatchers.Main) {
-            cam.stopPreview()
+            if(::cam.isInitialized) {
+                cam.stopPreview()
+            }
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        Timber.i("onDestroy - EZCam.close")
-        lotsOfPictures.stop()
+        i { "onDestroy - EZCam.close" }
+
         GlobalScope.launch(Dispatchers.Main) {
-            cam.close()
+            if(::lotsOfPictures.isInitialized) {
+                lotsOfPictures.stop()
+            }
+            if(::cam.isInitialized) {
+                cam.close()
+            }
         }
     }
 }

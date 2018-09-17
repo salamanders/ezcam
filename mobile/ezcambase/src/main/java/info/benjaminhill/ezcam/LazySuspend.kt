@@ -1,4 +1,4 @@
-package info.benjaminhill.deconcamera
+package info.benjaminhill.ezcam
 
 import kotlinx.coroutines.experimental.Dispatchers
 import kotlinx.coroutines.experimental.withContext
