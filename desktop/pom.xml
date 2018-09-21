@@ -13,11 +13,41 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <kotlin.version>1.2.61</kotlin.version>
+        <kotlin.version>1.2.70</kotlin.version>
+        <kotlin_coroutine_core.version>0.26.1</kotlin_coroutine_core.version>
         <kotlin.languageVersion>1.2</kotlin.languageVersion>
         <junit.version>4.12</junit.version>
         <java.version>1.8</java.version>
     </properties>
+
+    <repositories>
+        <repository>
+            <id>kotlin-eap</id>
+            <name>kotlin-eap</name>
+            <url>https://dl.bintray.com/kotlin/kotlin-eap</url>
+        </repository>
+
+        <repository>
+            <id>bintray-kotlin-kotlinx</id>
+            <name>bintray</name>
+            <url>https://kotlin.bintray.com/kotlinx</url>
+        </repository>
+
+    </repositories>
+
+    <pluginRepositories>
+        <pluginRepository>
+            <id>kotlin-eap</id>
+            <name>kotlin-eap</name>
+            <url>http://dl.bintray.com/kotlin/kotlin-eap</url>
+        </pluginRepository>
+
+        <pluginRepository>
+            <id>bintray-kotlin-kotlinx</id>
+            <name>bintray-plugins</name>
+            <url>https://kotlin.bintray.com/kotlinx</url>
+        </pluginRepository>
+    </pluginRepositories>
 
     <dependencies>
         <dependency>
@@ -32,11 +62,12 @@
             <artifactId>metadata-extractor</artifactId>
             <version>2.11.0</version>
         </dependency>
+
         <!-- https://mvnrepository.com/artifact/org.jetbrains.kotlinx/kotlinx-coroutines-core -->
         <dependency>
             <groupId>org.jetbrains.kotlinx</groupId>
             <artifactId>kotlinx-coroutines-core</artifactId>
-            <version>0.24.0</version>
+            <version>${kotlin_coroutine_core.version}</version>
         </dependency>
 
         <dependency>
@@ -75,6 +106,8 @@
                         <arg>-Xcoroutines=enable</arg>
                     </args>
                 </configuration>
+                <dependencies>
+                </dependencies>
             </plugin>
 
             <plugin>

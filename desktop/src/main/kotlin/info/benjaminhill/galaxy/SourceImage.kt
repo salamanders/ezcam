@@ -3,8 +3,6 @@ package info.benjaminhill.galaxy
 import com.drew.imaging.ImageMetadataReader
 import com.drew.metadata.exif.ExifSubIFDDirectory
 import com.google.gson.GsonBuilder
-import java.awt.RenderingHints
-import java.awt.geom.AffineTransform
 import java.awt.image.*
 import java.io.File
 import java.io.Serializable
@@ -97,26 +95,6 @@ open class SourceImage(fileName: String) : Serializable {
                 pixelLocation++
             }
             return Triple(red, green, blue)
-        }
-
-
-        fun rotate(colorImage: BufferedImage, radianAngle: Double, anchorx: Double = colorImage.width / 2.0, anchory: Double = colorImage.height / 2.0): BufferedImage {
-            val result = BufferedImage(colorImage.width, colorImage.height, BufferedImage.TYPE_3BYTE_BGR)
-            //GraphicsEnvironment.getLocalGraphicsEnvironment().defaultScreenDevice.defaultConfiguration.createCompatibleImage(colorImage.width, colorImage.height, Transparency.TRANSLUCENT)
-            result.createGraphics().let { g ->
-                g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-                g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC)
-                g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY)
-
-                // val at = AffineTransform.getTranslateInstance(((neww - colorImage.width) / 2).toDouble(), ((newh - colorImage.height) / 2).toDouble())!!
-                // at.rotate(radianAngle, (colorImage.width / 2).toDouble(), (colorImage.height / 2).toDouble())
-
-                val at = AffineTransform.getRotateInstance(radianAngle, anchorx, anchory)
-                g.drawRenderedImage(colorImage, at)
-                g.dispose()
-            }
-
-            return result
         }
 
         fun blur(colorImage: BufferedImage): BufferedImage {

@@ -10,6 +10,23 @@ class WritableImage(private val destinationName: String, private val width: Int,
     val blue = ByteArray(width * height)
     val lum = ShortArray(width * height)
 
+    fun setPixel(x: Int, y: Int, r: Byte = 255.toByte(), g: Byte = 255.toByte(), b: Byte = 255.toByte(), stroke: Int = 0) {
+        if (x !in 0 until width || y !in 0 until height) {
+            return
+        }
+
+        for (vx in x - stroke..x + stroke) {
+            for (vy in y - stroke..y + stroke) {
+                val i = vy * width + vx
+                if (i in 0 until red.size) {
+                    red[i] = r
+                    green[i] = g
+                    blue[i] = b
+                }
+            }
+        }
+    }
+
     fun save(name: String = destinationName) {
         val image = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
         val data = IntArray(width * height)
@@ -54,20 +71,20 @@ class WritableImage(private val destinationName: String, private val width: Int,
             val wi = WritableImage("sum", others.first().width, others.first().height)
             val size = wi.red.size
             val backgroundColorBytes = backgroundLight.getColorData()
-            val backgroundColors = Triple(IntArray(size), IntArray(size), IntArray(size))
+            val backgroundColors = Triple(LongArray(size), LongArray(size), LongArray(size))
             for (i in 0 until size) {
-                backgroundColors.first[i] = backgroundColorBytes.first[i].toInt() and 0xFF
-                backgroundColors.second[i] = backgroundColorBytes.second[i].toInt() and 0xFF
-                backgroundColors.third[i] = backgroundColorBytes.third[i].toInt() and 0xFF
+                backgroundColors.first[i] = backgroundColorBytes.first[i].toLong() and 0xFF
+                backgroundColors.second[i] = backgroundColorBytes.second[i].toLong() and 0xFF
+                backgroundColors.third[i] = backgroundColorBytes.third[i].toLong() and 0xFF
             }
 
             val tempSums = Triple(LongArray(size), LongArray(size), LongArray(size))
             others.forEach { cap ->
                 val capColor = cap.getColorData()
                 for (i in 0 until size) {
-                    tempSums.first[i] += Math.max(0L, ((capColor.first[i].toInt() and 0xFF) - backgroundColors.first[i]).toLong())
-                    tempSums.second[i] += Math.max(0L, ((capColor.second[i].toInt() and 0xFF) - backgroundColors.second[i]).toLong())
-                    tempSums.third[i] += Math.max(0L, ((capColor.third[i].toInt() and 0xFF) - backgroundColors.third[i]).toLong())
+                    tempSums.first[i] += Math.max(0L, ((capColor.first[i].toInt() and 0xFF) - backgroundColors.first[i]))
+                    tempSums.second[i] += Math.max(0L, ((capColor.second[i].toInt() and 0xFF) - backgroundColors.second[i]))
+                    tempSums.third[i] += Math.max(0L, ((capColor.third[i].toInt() and 0xFF) - backgroundColors.third[i]))
                 }
             }
             val scale = Math.min(multiplier, others.size.toDouble()) / others.size

@@ -1,8 +1,5 @@
 package info.benjaminhill.galaxy
 
-import java.lang.Math.cos
-import java.lang.Math.sin
-import javax.imageio.ImageIO
 import kotlin.system.measureTimeMillis
 
 
@@ -10,59 +7,14 @@ import kotlin.system.measureTimeMillis
  * A single captured read-only frame that supports star locations, rotation settings, etc.
  * Persists to a metadata cache
  */
-class Capture(fileName: String) : SourceImage(fileName) {
+open class Capture(fileName: String) : SourceImage(fileName) {
 
-    private val stars: MutableSet<Star> = mutableSetOf()
-    var rotationRadians = 0.0 // Can't be based off of ts directly, because we don't know what time=0 is
-    var rotationAnchorX = 0.0
-    var rotationAnchorY = 0.0
-
-    fun getStarsSize(): Int = stars.size
-
-    fun getFilteredStarsSize(): Int = stars.filter { it.valid }.size
-
-    fun filterStars(pre: Capture, post: Capture) {
-        stars.forEach { star ->
-            star.valid = pre.stars.find { star.distSq(it) <= Star.MINIMUM_DIST_SQ * 2 } != null &&
-                    post.stars.find { star.distSq(it) < Star.MINIMUM_DIST_SQ * 2 } != null
-        }
-    }
-
-    /**
-     * Updates all star vx, vy to virtual locations based on rotations
-     */
-    fun updateVirtualStarLocations(
-            newRotationAnchorX: Double,
-            newRotationAnchorY: Double,
-            newRotationRadiansPerMs: Double,
-            ts0: Long
-    ) {
-
-        rotationAnchorX = newRotationAnchorX
-        rotationAnchorY = newRotationAnchorY
-        rotationRadians = newRotationRadiansPerMs * (ts - ts0)
-
-        val cosAlpha = cos(rotationRadians)
-        val sinAlpha = sin(rotationRadians)
-        stars.forEach {
-            val dX = it.x - rotationAnchorX
-            val dY = it.y - rotationAnchorY
-            it.vx = rotationAnchorX + cosAlpha * dX - sinAlpha * dY
-            it.vy = rotationAnchorY + sinAlpha * dX + cosAlpha * dY
-        }
-    }
-
-    override fun getColorData(): Triple<ByteArray, ByteArray, ByteArray> {
-        if (rotationRadians.isNaN()) {
-            return getColorData(ImageIO.read(sourceImageFile))
-        }
-        return getColorData(rotate(ImageIO.read(sourceImageFile), rotationRadians, rotationAnchorX, rotationAnchorY))
-    }
+    val stars: MutableSet<Star> = mutableSetOf()
 
     /** Time intensive, so caller should save after this */
     fun findStars(backgroundLum: ShortArray) {
 
-        measureTimeMillis {
+        val ms = measureTimeMillis {
             stars.clear()
             val lum = getLum()
             for (i in 0 until lum.size) {
@@ -72,7 +24,7 @@ class Capture(fileName: String) : SourceImage(fileName) {
                 val bucketWidth = width / bucketDim
                 val bucketHeight = height / bucketDim
                 val totalBucketCount = Math.ceil(bucketDim * bucketDim).toInt()
-                val bestStarPerBucket = Array(totalBucketCount) { Star(-1, -1, -1) }
+                val bestStarPerBucket = Array(totalBucketCount) { Star(-1.0, -1.0, -1) }
 
                 for (y in 0 until height) {
                     for (x in 0 until width) {
@@ -81,7 +33,8 @@ class Capture(fileName: String) : SourceImage(fileName) {
                         val yBucket = Math.floor(y / bucketHeight).toInt()
                         val bucketNum = Math.floor(yBucket * bucketDim + xBucket).toInt()
                         if (lum[i] > bestStarPerBucket[bucketNum].lum) {
-                            bestStarPerBucket[bucketNum] = Star(x, y, lum[i]) // TODO something better with blurring or wavelets or lum deltas
+                            bestStarPerBucket[bucketNum] = Star(x.toDouble(), y.toDouble(), lum[i])
+                            // TODO something better with blurring or wavelets or lum deltas, better still to do the successive centroids
                         }
                     }
                 }
@@ -94,27 +47,8 @@ class Capture(fileName: String) : SourceImage(fileName) {
                 } != null
             }
 
-        }.let {
-            println("findStars took $it ms to find ${stars.size}")
         }
-    }
-
-    /**
-     * Sum of distances to nearest star (squared)
-     * Nearest determined pre-rotation
-     * Caller must have set rotations and anchors and called updateVirtualStarLocations
-     * Not thread-safe because depends on each Capture's internal rotation settings
-     * TODO: penalty for star brightness differences `val pctDiffLum = Math.abs((star.lum - otherStar.lum) / 255.0)`
-     */
-    fun starDistance(other: Capture): Double {
-        //require(getFilteredStarsSize()>0)
-        //require(other.getFilteredStarsSize()>0)
-
-        val starPairs = stars.filter { it.valid }.map { star ->
-            star to other.stars.filter { otherStar -> otherStar.valid }.minBy { otherStar -> star.distSq(otherStar) }!!
-        }
-
-        return starPairs.map { pair -> pair.first.virtualDistSq(pair.second) }.average()
+        println("findStars took $ms ms to find ${stars.size}")
     }
 
     override fun loadMetadata() {
@@ -122,9 +56,6 @@ class Capture(fileName: String) : SourceImage(fileName) {
         metadataFile.bufferedReader().use {
             val loadedCapture = SourceImage.GSON.fromJson(it, this::class.java)!!
             stars.addAll(loadedCapture.stars)
-            rotationRadians = loadedCapture.rotationRadians
-            rotationAnchorX = loadedCapture.rotationAnchorX
-            rotationAnchorY = loadedCapture.rotationAnchorY
         }
     }
 

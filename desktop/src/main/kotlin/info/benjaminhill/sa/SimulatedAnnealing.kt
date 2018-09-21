@@ -149,9 +149,9 @@ class SimulatedAnnealing(private vararg val dimensions: Dimension, val errorFunc
 
     companion object {
         /** Termination criteria */
-        private const val MAX_SEQUENTIAL_FAILS_PER_DIMENSION = 75
+        private const val MAX_SEQUENTIAL_FAILS_PER_DIMENSION = 100
         /** Transition from SA to hill-climbing */
-        private const val ITERATIONS_TO_COOL_PER_DIMENSION = 25
+        private const val ITERATIONS_TO_COOL_PER_DIMENSION = 50
     }
 }
 
