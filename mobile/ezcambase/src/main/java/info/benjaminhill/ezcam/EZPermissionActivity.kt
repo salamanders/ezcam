@@ -1,12 +1,10 @@
 package info.benjaminhill.ezcam
 
 import android.content.pm.PackageManager
-import android.os.Bundle
-
 import android.widget.Toast
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.github.ajalt.timberkt.*
+import com.github.ajalt.timberkt.w
 
 /**
  * Work out the dangerous permissions listed in the AndroidManifest.xml (dynamically)
@@ -14,19 +12,6 @@ import com.github.ajalt.timberkt.*
  *
  */
 abstract class EZPermissionActivity : ScopedAppActivity() {
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        // Don't ignore exceptions in coroutines https://github.com/Kotlin/kotlinx.coroutines/issues/148#issuecomment-338101986
-        val baseUEH = Thread.getDefaultUncaughtExceptionHandler()!!
-        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
-            // this may double log the error on older versions of android
-            w { "FATAL EXCEPTION: ${thread.name} $error" }
-            baseUEH.uncaughtException(thread, error)
-            throw error
-        }
-    }
 
     /** Block your code in onResume with this */
     protected fun hasAllRequiredPermissions() = missingPermissions.isEmpty()

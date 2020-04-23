@@ -1,7 +1,8 @@
 package info.benjaminhill.ezcam
 
-import kotlinx.coroutines.experimental.Dispatchers
-import kotlinx.coroutines.experimental.withContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
 
 /**
  * From https://stackoverflow.com/questions/51862715/how-would-i-wrap-this-not-quite-by-lazy-result-caching-function-call-in-idio/51877612#51877612
@@ -13,7 +14,7 @@ import kotlinx.coroutines.experimental.withContext
  *   suspendCoroutine { cont -> cont.resume(foo.use()) }
  * </code>
  */
-class LazySuspend<out T : Any>(private val f: suspend () -> T) {
+internal class LazySuspend<out T : Any>(private val f: suspend () -> T) {
     private lateinit var cachedValue: T
 
     @Synchronized

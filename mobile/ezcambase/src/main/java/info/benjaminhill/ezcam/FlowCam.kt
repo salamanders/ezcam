@@ -8,10 +8,10 @@ import android.content.pm.PackageManager
 import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.*
+import android.hardware.camera2.params.OutputConfiguration
+import android.hardware.camera2.params.SessionConfiguration
 import android.media.Image
 import android.media.ImageReader
-import android.media.MediaScannerConnection
-import android.os.Environment
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Size
@@ -19,32 +19,76 @@ import android.view.Surface
 import android.view.TextureView
 import androidx.annotation.RequiresPermission
 import androidx.core.app.ActivityCompat
-import kotlinx.coroutines.experimental.Dispatchers
-import kotlinx.coroutines.experimental.withContext
-import java.io.File
-import java.text.SimpleDateFormat
+import androidx.core.content.ContextCompat
+import com.github.ajalt.timberkt.Timber
+import com.github.ajalt.timberkt.d
+import com.github.ajalt.timberkt.i
+import com.github.ajalt.timberkt.w
+import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.flow.onStart
 import java.util.*
-import kotlin.coroutines.experimental.suspendCoroutine
-import com.github.ajalt.timberkt.*
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlin.coroutines.suspendCoroutine
+
+class ImageData(
+        val width: Int,
+        val height: Int,
+        val plane: ByteArray
+)
 
 @SuppressLint("MissingPermission")
 /**
  * camera2 API deconstructed - done through lazy loads
- * To use, parent class should extend CoroutineScope
- * see https://github.com/Kotlin/kotlinx.coroutines/blob/master/ui/coroutines-guide-ui.md
- * Then wrap calls in `launch { cam.takePicture() }`
- * from https://kotlin.github.io/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.experimental/launch.html
+ * To use, parent class should extend EZPermissionActivity
+ * Then wrap calls in `launch { FlowCam(this@MainActivity, textureView, ImageFormat.JPEG).flow().take(5)... }`
  */
-class EZCam
-@RequiresPermission(allOf = [Manifest.permission.CAMERA, Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE])
-constructor(private val context: Activity, private val previewTextureView: TextureView) {
+class FlowCam
+@RequiresPermission(allOf = [
+    Manifest.permission.CAMERA,
+    Manifest.permission.READ_EXTERNAL_STORAGE,
+    Manifest.permission.WRITE_EXTERNAL_STORAGE
+])
+constructor(
+        private val context: Activity,
+        private val previewTextureView: TextureView,
+        private val imageFormat: Int = ImageFormat.JPEG
+) {
 
-    /** The surface that the preview gets drawn on */
+
+    @ExperimentalCoroutinesApi
+    fun flow(): Flow<ImageData> = flow {
+        while (true) {
+            i { "Flow:click" }
+            emit(clickAndGet())
+        }
+    }.onStart {
+        i { "Flow:onStart" }
+        startPreview()
+    }.onCompletion {
+        i { "Flow:onCompletion" }
+        stopPreview()
+        close()
+    }
+
+
+    private lateinit var imageCont: Continuation<ImageData>
+    private suspend fun clickAndGet(): ImageData = suspendCancellableCoroutine {
+        imageCont = it
+        runBlocking {
+            takePicture()
+        }
+    }
+
     private val previewSurface = LazySuspend {
         d { "EZCam.previewSurface:start" }
         if (previewTextureView.isAvailable) {
             Surface(previewTextureView.surfaceTexture).also {
-                i {"Created previewSurface directly" }
+                i { "Created previewSurface directly" }
             }
         } else {
             suspendCoroutine { cont ->
@@ -52,7 +96,7 @@ constructor(private val context: Activity, private val previewTextureView: Textu
                     @SuppressLint("Recycle")
                     override fun onSurfaceTextureAvailable(surfaceTexture: SurfaceTexture, width: Int, height: Int) {
                         cont.resume(Surface(surfaceTexture).also {
-                            i{"Created previewSurface through a surfaceTextureListener" }
+                            i { "Created previewSurface through a surfaceTextureListener" }
                         })
                     }
 
@@ -106,22 +150,31 @@ constructor(private val context: Activity, private val previewTextureView: Textu
         val cd = cameraDevice()
         val rs = previewSurface()
         suspendCoroutine { cont ->
-            cd.createCaptureSession(Arrays.asList(rs, imageReaderJPEG.surface), object : CameraCaptureSession.StateCallback() {
+
+            val outputConfigs = listOf(rs, imageReader.surface).map { OutputConfiguration(it) }
+            val stateCallback = object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(session: CameraCaptureSession) = cont.resume(session).also {
                     i { "Created cameraCaptureSession through createCaptureSession.onConfigured" }
                 }
 
                 override fun onConfigureFailed(session: CameraCaptureSession) {
                     val e = Exception("createCaptureSession.onConfigureFailed")
-                    Timber.e(e) {"onConfigureFailed: Could not configure capture session." }
+                    Timber.e(e) { "onConfigureFailed: Could not configure capture session." }
                     cont.resumeWithException(e)
                 }
-            }, backgroundHandler)
+            }
+
+            cd.createCaptureSession(SessionConfiguration(
+                    SessionConfiguration.SESSION_REGULAR,
+                    outputConfigs,
+                    ContextCompat.getMainExecutor(context),
+                    stateCallback
+            ))
         }
     }
 
     /** Builder set to preview mode */
-    private val captureRequestBuilderForPreview = LazySuspend<CaptureRequest.Builder> {
+    private val captureRequestBuilderForPreview = LazySuspend {
         cameraDevice().createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).also {
             it.addTarget(previewSurface())
             i { "captureRequestBuilderForPreview:created" }
@@ -130,9 +183,9 @@ constructor(private val context: Activity, private val previewTextureView: Textu
 
 
     /** Builder set to higher quality capture mode */
-    private val captureRequestBuilderForImageReader = LazySuspend<CaptureRequest.Builder> {
+    private val captureRequestBuilderForImageReader = LazySuspend {
         cameraDevice().createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).also {
-            it.addTarget(imageReaderJPEG.surface)
+            it.addTarget(imageReader.surface)
             i { "captureRequestBuilderForImageReader:created" }
         }
     }
@@ -144,10 +197,10 @@ constructor(private val context: Activity, private val previewTextureView: Textu
     }
 
     private val imageSizeForImageReader: Size by lazy {
-        cameraCharacteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!.getOutputSizes(ImageFormat.JPEG).maxBy {
+        cameraCharacteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!.getOutputSizes(imageFormat).maxBy {
             it.width * it.height
         }!!.also {
-            i { "Found max size for the camera JPEG: $it" }
+            i { "Found max size for the camera: $it" }
         }
     }
 
@@ -157,24 +210,33 @@ constructor(private val context: Activity, private val previewTextureView: Textu
         }
     }
 
-    private val imageReaderJPEG: ImageReader by lazy {
+    private val imageReader: ImageReader by lazy {
         // TODO: Previews should be smaller res
-        ImageReader.newInstance(imageSizeForImageReader.width, imageSizeForImageReader.height, ImageFormat.JPEG, 3).also {
+        ImageReader.newInstance(
+                imageSizeForImageReader.width,
+                imageSizeForImageReader.height,
+                imageFormat, MAX_IMAGES).also {
             it.setOnImageAvailableListener(onImageAvailableForImageReader, backgroundHandler)
-            i { "imageReaderJPEG:created maxImages ${it.maxImages}, registered onImageAvailableForImageReader" }
+            i { "imageReader:created maxImages ${it.maxImages}, registered onImageAvailableForImageReader" }
         }
     }
 
     /** Back beats everything */
     private val bestCameraId: String by lazy {
-        val cameraId = cameraManager.cameraIdList.filterNotNull().maxBy { cameraId ->
+        val cameraId = cameraManager.cameraIdList.filterNotNull().filter { cameraId ->
+            val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+            val configs = characteristics.get(
+                    CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
+            configs.outputFormats.contains(imageFormat)
+        }.maxBy { cameraId ->
             when (cameraManager.getCameraCharacteristics(cameraId).get(CameraCharacteristics.LENS_FACING)) {
-                CameraCharacteristics.LENS_FACING_BACK -> 3
-                CameraCharacteristics.LENS_FACING_FRONT -> 2
+                CameraCharacteristics.LENS_FACING_BACK -> 10
+                CameraCharacteristics.LENS_FACING_FRONT -> 3
                 CameraCharacteristics.LENS_FACING_EXTERNAL -> 1
                 else -> 0
             }
-        } ?: throw NoSuchElementException("Unable to find camera")
+        }
+                ?: throw NoSuchElementException("Unable to find camera supporting format ${imageFormatToName(imageFormat)}.")
         i { "bestCameraId:created $cameraId" }
         cameraId
     }
@@ -197,20 +259,20 @@ constructor(private val context: Activity, private val previewTextureView: Textu
         ImageReader.OnImageAvailableListener {
             i { "onImageAvailableForImageReader" }
 
-            if (ActivityCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-                throw IllegalStateException("You don't have the required permission WRITE_EXTERNAL_STORAGE, try guarding with EZPermission.")
-            }
+            imageReader.acquireLatestImage().use { image: Image ->
+                //val extension = imageFormatToName(imageFormat)
+                //val fileName = "image_${SDF.format(Date())}.$extension"
+                //val targetFile = saveImage(image, fileName)
+                //i { "Saved image: $targetFile (${image.width}x${image.height} ${image.format})" }
 
-            val albumFolder = File(Environment.getExternalStoragePublicDirectory(
-                    Environment.DIRECTORY_DCIM), "/Camera/ezcam")
-            albumFolder.mkdirs()
-            val imageFile = File(albumFolder, "image_${SDF.format(Date())}.jpg")
-            imageReaderJPEG.acquireLatestImage().use { image ->
-                saveImage(image, imageFile)
-            }
-
-            MediaScannerConnection.scanFile(context, arrayOf(imageFile.toString()), arrayOf("image/jpeg")) { filePath, u ->
-                i { "scanFile finished $filePath $u" }
+                val buffer = image.planes[0].buffer!!
+                val bytes = ByteArray(buffer.remaining()).apply { buffer.get(this) }
+                imageCont.resume(ImageData(
+                        width = image.width,
+                        height = image.height,
+                        plane = bytes
+                ))
+                image.close()
             }
         }
     }
@@ -218,19 +280,18 @@ constructor(private val context: Activity, private val previewTextureView: Textu
     /**
      * Set CaptureRequest parameters e.g. setCaptureSetting(CaptureRequest.LENS_FOCUS_DISTANCE, 0.0f)
      */
-    suspend fun <T> setCaptureSetting(key: CaptureRequest.Key<T>, value: T) = withContext(Dispatchers.Default) {
-        // captureRequestBuilderForPreview().set(key, value) Long exposure makes preview sad
+    private suspend fun <T> setCaptureSetting(key: CaptureRequest.Key<T>, value: T) = withContext(Dispatchers.Default) {
         captureRequestBuilderForImageReader().set(key, value)
     }
 
-    suspend fun setCaptureSettingMaxExposure() = withContext(Dispatchers.Default) {
+    private suspend fun setCaptureSettingMaxExposure() = withContext(Dispatchers.Default) {
         cameraCharacteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)?.upper?.let { maxExposure ->
             setCaptureSetting(CaptureRequest.SENSOR_EXPOSURE_TIME, maxExposure)
             i { "Set exposure to max ${maxExposure / 1_000_000_000.0} seconds" }
         }
     }
 
-    suspend fun setFocusDistanceMax() = withContext(Dispatchers.Default) {
+    private suspend fun setFocusDistanceMax() = withContext(Dispatchers.Default) {
         val hyperfocalDistance = cameraCharacteristics.get(CameraCharacteristics.LENS_INFO_HYPERFOCAL_DISTANCE)
                 ?: 0.0f.also {
                     w { "Hyperfocal distance not available" }
@@ -245,8 +306,31 @@ constructor(private val context: Activity, private val previewTextureView: Textu
     /**
      * start the preview, rebuilding the preview request each time
      */
-    suspend fun startPreview() = withContext(Dispatchers.Default) {
+    private suspend fun startPreview() = withContext(Dispatchers.Default) {
         d { "EZCam.startPreview:start" }
+
+        when (imageFormat) {
+            ImageFormat.JPEG -> {
+                setCaptureSetting(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_HIGH_QUALITY)
+                setCaptureSetting(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_NIGHT)
+                setCaptureSetting(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY)
+                setCaptureSetting(CaptureRequest.COLOR_CORRECTION_MODE, CaptureRequest.COLOR_CORRECTION_MODE_HIGH_QUALITY)
+
+                setCaptureSetting(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF)
+
+                // setCaptureSetting(CaptureRequest.DISTORTION_CORRECTION_MODE, CaptureRequest.DISTORTION_CORRECTION_MODE_HIGH_QUALITY)
+                setCaptureSetting(CaptureRequest.HOT_PIXEL_MODE, CaptureRequest.HOT_PIXEL_MODE_HIGH_QUALITY)
+
+                setCaptureSetting(CaptureRequest.JPEG_QUALITY, 99.toByte())
+
+                setCaptureSetting(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+                setCaptureSettingMaxExposure()
+                setCaptureSetting(CaptureRequest.SENSOR_SENSITIVITY, 600) // iso
+                setCaptureSetting(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+                setFocusDistanceMax()
+            }
+        }
+
         cameraCaptureSession().setRepeatingRequest(captureRequestBuilderForPreview().build(), null, backgroundHandler)
         d { "EZCam.startPreview:end" }
     }
@@ -254,7 +338,7 @@ constructor(private val context: Activity, private val previewTextureView: Textu
     /**
      * stop the preview
      */
-    suspend fun stopPreview() = withContext(Dispatchers.Default) {
+    private suspend fun stopPreview() = withContext(Dispatchers.Default) {
         d { "EZCam.stopPreview (stops repeating capture session)" }
         cameraCaptureSession().stopRepeating()
     }
@@ -262,7 +346,7 @@ constructor(private val context: Activity, private val previewTextureView: Textu
     /**
      * close the camera definitively
      */
-    suspend fun close() = withContext(Dispatchers.Default) {
+    private suspend fun close() = withContext(Dispatchers.Default) {
         cameraDevice().close()
         previewSurface().release()
         stopBackgroundThread()
@@ -271,9 +355,16 @@ constructor(private val context: Activity, private val previewTextureView: Textu
     /**
      * take just one picture
      */
-    suspend fun takePicture() = withContext(Dispatchers.Default) {
-        captureRequestBuilderForImageReader().set(CaptureRequest.JPEG_ORIENTATION, cameraCharacteristics.get(CameraCharacteristics.SENSOR_ORIENTATION))
-        cameraCaptureSession().capture(captureRequestBuilderForImageReader().build(), null, backgroundHandler)
+    private suspend fun takePicture() = withContext(Dispatchers.Default) {
+        when (imageFormat) {
+            ImageFormat.JPEG -> captureRequestBuilderForImageReader()
+                    .set(CaptureRequest.JPEG_ORIENTATION, cameraCharacteristics.get(CameraCharacteristics.SENSOR_ORIENTATION))
+            ImageFormat.DEPTH16, ImageFormat.DEPTH_POINT_CLOUD -> captureRequestBuilderForImageReader()
+                    .set(CaptureRequest.DISTORTION_CORRECTION_MODE, CaptureRequest.DISTORTION_CORRECTION_MODE_OFF)
+        }
+
+        cameraCaptureSession()
+                .capture(captureRequestBuilderForImageReader().build(), null, backgroundHandler)
     }
 
     private fun stopBackgroundThread() {
@@ -286,21 +377,15 @@ constructor(private val context: Activity, private val previewTextureView: Textu
     }
 
     companion object {
-        private val SDF = SimpleDateFormat("yyyyMMddhhmmssSSS", Locale.US)
+        private const val MAX_IMAGES = 3
 
-        /**
-         * Save image to storage
-         * @param image Image object got from onPicture() callback of EZCamCallback
-         * @param file File where image is going to be written
-         * @return File object pointing to the file uri, null if file already exist
-         */
-        private fun saveImage(image: Image, file: File) {
-            require(!file.exists()) { "Image target file $file must not exist." }
-            val buffer = image.planes[0].buffer!!
-            val bytes = ByteArray(buffer.remaining())
-            buffer.get(bytes)
-            file.writeBytes(bytes)
-            i { "Finished writing image to $file: ${file.length()}" }
+        private fun imageFormatToName(imageFormat: Int): String = when (imageFormat) {
+            ImageFormat.JPEG -> "jpg"
+            ImageFormat.DEPTH16 -> "DEPTH16"
+            ImageFormat.DEPTH_POINT_CLOUD -> "DEPTH_POINT_CLOUD"
+            else -> error("Unsupported image format:$imageFormat")
         }
     }
 }
+
+
