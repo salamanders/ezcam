@@ -1,1 +1,1 @@
-include ':galaxyfinder', ':ezcambase'
+include ':depthcamera', ':ezcambase'
