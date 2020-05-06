@@ -3,11 +3,11 @@ apply plugin: 'kotlin-android'
 apply plugin: 'kotlin-android-extensions'
 
 android {
-    compileSdkVersion 'android-R'
+    compileSdkVersion 29
     defaultConfig {
         applicationId "info.benjaminhill.ezcam"
-        minSdkVersion 'R'
-        targetSdkVersion 'R'
+        minSdkVersion 29
+        targetSdkVersion 29
         versionCode 1
         versionName "1.0"
         testInstrumentationRunner "android.support.test.runner.AndroidJUnitRunner"

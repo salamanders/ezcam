@@ -1,7 +1,6 @@
 package info.benjaminhill.depthcamera
 
 import android.annotation.SuppressLint
-import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.ImageFormat
@@ -19,10 +18,11 @@ import kotlinx.android.synthetic.main.activity_main.*
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlin.experimental.and
+import kotlin.system.measureTimeMillis
 
 
 class MainActivity : EZPermissionActivity() {
@@ -44,22 +44,30 @@ class MainActivity : EZPermissionActivity() {
         }
 
         launch {
-            i { "Creating FlowCam" }
-            FlowCam(this@MainActivity, textureView, ImageFormat.DEPTH16)
-                    .flow()
-                    .catch { e -> e { "Error in flow: ${e.localizedMessage}" } }
-                    .take(3)
-                    .collect { imageData ->
-                        i { "Got image back from Flow: ${imageData.width}x${imageData.height} size:${imageData.plane.size}" }
-                        processDepthImage(imageData, applicationContext)
-                        delay(2_000)
-                    }
+            i { "Creating FlowCam, pausing 2 seconds" }
+            delay(2_000)
+
+            val images = mutableListOf<ImageData>()
+            val ms = measureTimeMillis {
+                FlowCam(this@MainActivity, textureView, ImageFormat.DEPTH16)
+                        .flow()
+                        .catch { e -> e { "Error in flow: ${e.localizedMessage}" } }
+                        .take(10)
+                        .toList(images)
+            }
+
+            i { "Collected ${images.size} images in ${ms}ms.  Saving." }
+
+            images.forEach { imageData ->
+                i { "Processing image: ${imageData.width}x${imageData.height} size:${imageData.plane.size}" }
+                depthImageToBitmap(imageData).saveToMediaStore(applicationContext)
+            }
         }
     }
 }
 
 @ExperimentalUnsignedTypes
-fun processDepthImage(image: ImageData, context: Context) {
+fun depthImageToBitmap(image: ImageData): Bitmap {
 
     val depths = ShortArray(image.plane.size / 2) { i ->
         (image.plane[i * 2].toUByte().toInt() + (image.plane[(i * 2) + 1].toInt() shl 8)).toShort()
@@ -70,18 +78,17 @@ fun processDepthImage(image: ImageData, context: Context) {
         Pair(range, depthConfidence2)
     }
 
-    val depthResult = Bitmap.createBitmap(image.width, image.height, Bitmap.Config.ARGB_8888)!!.apply {
+    return Bitmap.createBitmap(image.width, image.height, Bitmap.Config.ARGB_8888)!!.apply {
         for (y in 0 until height) {
             for (x in 0 until width) {
-                val (range, conf) = depths[y * image.width + x]
-                val red = range / 256
-                val green = range % 256
-                val blue = (conf * 255.0).toInt()
+                val (rangeMm, confidence) = depths[y * image.width + x]
+                val red = rangeMm / 256
+                val green = rangeMm % 256
+                val blue = (confidence * 255.0).toInt()
                 setPixel(x, y, Color.rgb(red, green, blue))
             }
         }
     }
-    depthResult.saveToMediaStore(context)
 }
 
 

@@ -35,11 +35,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 
-class ImageData(
-        val width: Int,
-        val height: Int,
-        val plane: ByteArray
-)
+
 
 @SuppressLint("MissingPermission")
 /**
@@ -377,7 +373,7 @@ constructor(
     }
 
     companion object {
-        private const val MAX_IMAGES = 3
+        private const val MAX_IMAGES = 2
 
         private fun imageFormatToName(imageFormat: Int): String = when (imageFormat) {
             ImageFormat.JPEG -> "jpg"
