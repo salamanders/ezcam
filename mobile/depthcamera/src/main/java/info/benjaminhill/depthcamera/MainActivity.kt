@@ -1,28 +1,32 @@
 package info.benjaminhill.depthcamera
 
+import android.Manifest
 import android.annotation.SuppressLint
-import android.graphics.Bitmap
-import android.graphics.Color
-import android.graphics.ImageFormat
+import android.content.ContentValues
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
+import android.view.KeyEvent
 import android.view.WindowManager
+import android.widget.Toast
+import androidx.core.app.ActivityCompat
 import com.github.ajalt.timberkt.Timber
 import com.github.ajalt.timberkt.e
 import com.github.ajalt.timberkt.i
 import com.github.ajalt.timberkt.w
-import info.benjaminhill.ezcam.EZPermissionActivity
-import info.benjaminhill.ezcam.FlowCam
-import info.benjaminhill.ezcam.ImageData
+import info.benjaminhill.droid.EZPermissionActivity
+import info.benjaminhill.droid.rootCause
+import info.benjaminhill.ezcam.DepthCam
 import info.benjaminhill.ezcam.saveToMediaStore
 import kotlinx.android.synthetic.main.activity_main.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.take
-import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import kotlin.experimental.and
-import kotlin.system.measureTimeMillis
+import java.io.File
+import java.io.PrintWriter
 
 
 class MainActivity : EZPermissionActivity() {
@@ -31,6 +35,51 @@ class MainActivity : EZPermissionActivity() {
         Timber.plant(Timber.DebugTree())
         setContentView(R.layout.activity_main)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    private lateinit var depthCam: DepthCam
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
+            takeDepthPictures()
+        }
+        return true
+    }
+
+    @ExperimentalUnsignedTypes
+    @ExperimentalCoroutinesApi
+    private fun takeDepthPictures() {
+        launch(Dispatchers.Default) {
+            depthCam.images
+                    .catch { e ->
+                        e {
+                            val rootCause = e.rootCause()
+                            rootCause.printStackTrace()
+                            "Error in flow: ${rootCause.localizedMessage}"
+                        }
+                    }
+                    .onStart {
+                        i { "Starting capture of burst ($BURST_SIZE) depth images." }
+                    }
+                    .onCompletion {
+                        runOnUiThread {
+                            Toast.makeText(applicationContext, "Captured $BURST_SIZE Frames", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                    .take(BURST_SIZE)
+                    .flowOn(Dispatchers.Default)
+                    .collectIndexed { index, imageData ->
+                        i { "Processing image $index: ${imageData.width}x${imageData.height} size:${imageData.plane.size}" }
+                        runOnUiThread {
+                            Toast.makeText(applicationContext, "$index/$BURST_SIZE", Toast.LENGTH_SHORT).show()
+                        }
+                        val (points, bitmap) = depthCam.depthToCloudAndBitmap((imageData))
+                        bitmap.saveToMediaStore(applicationContext)
+                        points.saveToDownloads()
+                        delay(1_000)
+                    }
+            i { "Burst finished." }
+        }
     }
 
     @ExperimentalUnsignedTypes
@@ -43,53 +92,43 @@ class MainActivity : EZPermissionActivity() {
             return
         }
 
-        launch {
-            i { "Creating FlowCam, pausing 2 seconds" }
-            delay(2_000)
-
-            val images = mutableListOf<ImageData>()
-            val ms = measureTimeMillis {
-                FlowCam(this@MainActivity, textureView, ImageFormat.DEPTH16)
-                        .flow()
-                        .catch { e -> e { "Error in flow: ${e.localizedMessage}" } }
-                        .take(10)
-                        .toList(images)
-            }
-
-            i { "Collected ${images.size} images in ${ms}ms.  Saving." }
-
-            images.forEach { imageData ->
-                i { "Processing image: ${imageData.width}x${imageData.height} size:${imageData.plane.size}" }
-                depthImageToBitmap(imageData).saveToMediaStore(applicationContext)
-            }
+        if (ActivityCompat.checkSelfPermission(this@MainActivity, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED ||
+                ActivityCompat.checkSelfPermission(this@MainActivity, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED ||
+                ActivityCompat.checkSelfPermission(this@MainActivity, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            error("Lint permission check XXX")
         }
-    }
-}
+        depthCam = DepthCam(this@MainActivity, textureView)
 
-@ExperimentalUnsignedTypes
-fun depthImageToBitmap(image: ImageData): Bitmap {
-
-    val depths = ShortArray(image.plane.size / 2) { i ->
-        (image.plane[i * 2].toUByte().toInt() + (image.plane[(i * 2) + 1].toInt() shl 8)).toShort()
-    }.map { sample ->
-        val range = (sample and 0x1FFF)
-        val depthConfidence = (sample shr 13 and 0x7)
-        val depthConfidence2 = if (depthConfidence.toInt() == 0) 1f else (depthConfidence - 1) / 7f
-        Pair(range, depthConfidence2)
     }
 
-    return Bitmap.createBitmap(image.width, image.height, Bitmap.Config.ARGB_8888)!!.apply {
-        for (y in 0 until height) {
-            for (x in 0 until width) {
-                val (rangeMm, confidence) = depths[y * image.width + x]
-                val red = rangeMm / 256
-                val green = rangeMm % 256
-                val blue = (confidence * 255.0).toInt()
-                setPixel(x, y, Color.rgb(red, green, blue))
+    private fun List<Triple<Float, Float, Float>>.saveToDownloads() {
+        val file = File(applicationContext.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS), "pointcloud_${System.currentTimeMillis()}.asc")
+        i { "Saving ASC to ${file.absolutePath}" }
+        PrintWriter(file).use { pw ->
+            forEach { (x, y, z) ->
+                pw.println("${x.str} ${y.str} ${z.str}")
             }
         }
+        val values = ContentValues()
+        values.put(MediaStore.Files.FileColumns.TITLE, file.name)
+        values.put(MediaStore.Files.FileColumns.DISPLAY_NAME, file.nameWithoutExtension)
+        values.put(MediaStore.Files.FileColumns.MIME_TYPE, "text/plain")
+        values.put(MediaStore.Files.FileColumns.SIZE, file.length())
+        values.put(MediaStore.Files.FileColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + File.separator + "DepthCam")
+
+        val database = applicationContext.contentResolver!!
+        database.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+        i { "Informed contentResolver manager about '${file.name}'" }
+    }
+
+    companion object {
+        const val BURST_SIZE = 10
+        internal val Float.str: String
+            get() = "%.5f".format(this)
     }
 }
 
 
-infix fun Short.shr(shift: Int): Short = (this.toInt() shr shift).toShort()
+
+
+

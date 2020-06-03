@@ -24,8 +24,8 @@ import com.github.ajalt.timberkt.Timber
 import com.github.ajalt.timberkt.d
 import com.github.ajalt.timberkt.i
 import com.github.ajalt.timberkt.w
+import info.benjaminhill.droid.LazySuspend
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.flow.onStart
@@ -36,14 +36,13 @@ import kotlin.coroutines.resumeWithException
 import kotlin.coroutines.suspendCoroutine
 
 
-
 @SuppressLint("MissingPermission")
 /**
  * camera2 API deconstructed - done through lazy loads
  * To use, parent class should extend EZPermissionActivity
  * Then wrap calls in `launch { FlowCam(this@MainActivity, textureView, ImageFormat.JPEG).flow().take(5)... }`
  */
-class FlowCam
+open class FlowCam
 @RequiresPermission(allOf = [
     Manifest.permission.CAMERA,
     Manifest.permission.READ_EXTERNAL_STORAGE,
@@ -54,10 +53,8 @@ constructor(
         private val previewTextureView: TextureView,
         private val imageFormat: Int = ImageFormat.JPEG
 ) {
-
-
     @ExperimentalCoroutinesApi
-    fun flow(): Flow<ImageData> = flow {
+    val images = flow {
         while (true) {
             i { "Flow:click" }
             emit(clickAndGet())
@@ -72,9 +69,9 @@ constructor(
     }
 
 
-    private lateinit var imageCont: Continuation<ImageData>
-    private suspend fun clickAndGet(): ImageData = suspendCancellableCoroutine {
-        imageCont = it
+    private lateinit var easyImageCont: Continuation<EasyImage>
+    private suspend fun clickAndGet(): EasyImage = suspendCancellableCoroutine {
+        easyImageCont = it
         runBlocking {
             takePicture()
         }
@@ -182,7 +179,41 @@ constructor(
     private val captureRequestBuilderForImageReader = LazySuspend {
         cameraDevice().createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).also {
             it.addTarget(imageReader.surface)
-            i { "captureRequestBuilderForImageReader:created" }
+
+            when (imageFormat) {
+                ImageFormat.JPEG -> {
+                    it.set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_HIGH_QUALITY)
+                    it.set(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_NIGHT)
+                    it.set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY)
+                    it.set(CaptureRequest.COLOR_CORRECTION_MODE, CaptureRequest.COLOR_CORRECTION_MODE_HIGH_QUALITY)
+                    it.set(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF)
+                    it.set(CaptureRequest.DISTORTION_CORRECTION_MODE, CaptureRequest.DISTORTION_CORRECTION_MODE_HIGH_QUALITY)
+                    it.set(CaptureRequest.HOT_PIXEL_MODE, CaptureRequest.HOT_PIXEL_MODE_HIGH_QUALITY)
+                    it.set(CaptureRequest.JPEG_QUALITY, 99.toByte())
+                    it.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+                    it.set(CaptureRequest.SENSOR_SENSITIVITY, 600) // iso
+                    it.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+
+                    // Max Exposure
+                    cameraCharacteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)?.upper?.let { maxExposure ->
+                        it.set(CaptureRequest.SENSOR_EXPOSURE_TIME, maxExposure)
+                        i { "Set exposure to max ${maxExposure / 1_000_000_000.0} seconds" }
+                    }
+
+                    // FocusDistanceMax
+                    val hyperfocalDistance = cameraCharacteristics.get(CameraCharacteristics.LENS_INFO_HYPERFOCAL_DISTANCE)
+                            ?: 0.0f.also { w { "Hyperfocal distance not available" } }
+                    // div 2 because I think it might help hedging towards infinity
+                    it.set(CaptureRequest.LENS_FOCUS_DISTANCE, hyperfocalDistance / 2) //
+                    i { "Set focus to hyperfocal diopters: $hyperfocalDistance / 2" }
+
+                }
+                ImageFormat.DEPTH16 -> {
+                    it.set(CaptureRequest.DISTORTION_CORRECTION_MODE, CaptureRequest.DISTORTION_CORRECTION_MODE_OFF)
+                }
+            }
+
+            i { "captureRequestBuilderForImageReader:created (and set to format-specific settings)" }
         }
     }
 
@@ -200,7 +231,7 @@ constructor(
         }
     }
 
-    private val cameraCharacteristics: CameraCharacteristics by lazy {
+    protected val cameraCharacteristics: CameraCharacteristics by lazy {
         cameraManager.getCameraCharacteristics(bestCameraId).also {
             i { "cameraCharacteristics:created for camera $bestCameraId" }
         }
@@ -211,7 +242,9 @@ constructor(
         ImageReader.newInstance(
                 imageSizeForImageReader.width,
                 imageSizeForImageReader.height,
-                imageFormat, MAX_IMAGES).also {
+                imageFormat,
+                MAX_IMAGES
+        ).also {
             it.setOnImageAvailableListener(onImageAvailableForImageReader, backgroundHandler)
             i { "imageReader:created maxImages ${it.maxImages}, registered onImageAvailableForImageReader" }
         }
@@ -256,77 +289,17 @@ constructor(
             i { "onImageAvailableForImageReader" }
 
             imageReader.acquireLatestImage().use { image: Image ->
-                //val extension = imageFormatToName(imageFormat)
-                //val fileName = "image_${SDF.format(Date())}.$extension"
-                //val targetFile = saveImage(image, fileName)
-                //i { "Saved image: $targetFile (${image.width}x${image.height} ${image.format})" }
-
-                val buffer = image.planes[0].buffer!!
-                val bytes = ByteArray(buffer.remaining()).apply { buffer.get(this) }
-                imageCont.resume(ImageData(
-                        width = image.width,
-                        height = image.height,
-                        plane = bytes
-                ))
+                easyImageCont.resume(EasyImage(image))
                 image.close()
             }
         }
     }
 
     /**
-     * Set CaptureRequest parameters e.g. setCaptureSetting(CaptureRequest.LENS_FOCUS_DISTANCE, 0.0f)
-     */
-    private suspend fun <T> setCaptureSetting(key: CaptureRequest.Key<T>, value: T) = withContext(Dispatchers.Default) {
-        captureRequestBuilderForImageReader().set(key, value)
-    }
-
-    private suspend fun setCaptureSettingMaxExposure() = withContext(Dispatchers.Default) {
-        cameraCharacteristics.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)?.upper?.let { maxExposure ->
-            setCaptureSetting(CaptureRequest.SENSOR_EXPOSURE_TIME, maxExposure)
-            i { "Set exposure to max ${maxExposure / 1_000_000_000.0} seconds" }
-        }
-    }
-
-    private suspend fun setFocusDistanceMax() = withContext(Dispatchers.Default) {
-        val hyperfocalDistance = cameraCharacteristics.get(CameraCharacteristics.LENS_INFO_HYPERFOCAL_DISTANCE)
-                ?: 0.0f.also {
-                    w { "Hyperfocal distance not available" }
-                }
-
-        // div 2 because I think it might help hedging towards infinity
-        setCaptureSetting(CaptureRequest.LENS_FOCUS_DISTANCE, hyperfocalDistance / 2) //
-        i { "Set focus to hyperfocal diopters: $hyperfocalDistance / 2" }
-    }
-
-
-    /**
      * start the preview, rebuilding the preview request each time
      */
     private suspend fun startPreview() = withContext(Dispatchers.Default) {
         d { "EZCam.startPreview:start" }
-
-        when (imageFormat) {
-            ImageFormat.JPEG -> {
-                setCaptureSetting(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE_HIGH_QUALITY)
-                setCaptureSetting(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_NIGHT)
-                setCaptureSetting(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY)
-                setCaptureSetting(CaptureRequest.COLOR_CORRECTION_MODE, CaptureRequest.COLOR_CORRECTION_MODE_HIGH_QUALITY)
-
-                setCaptureSetting(CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE, CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF)
-
-                // setCaptureSetting(CaptureRequest.DISTORTION_CORRECTION_MODE, CaptureRequest.DISTORTION_CORRECTION_MODE_HIGH_QUALITY)
-                setCaptureSetting(CaptureRequest.HOT_PIXEL_MODE, CaptureRequest.HOT_PIXEL_MODE_HIGH_QUALITY)
-
-                setCaptureSetting(CaptureRequest.JPEG_QUALITY, 99.toByte())
-
-                setCaptureSetting(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
-                setCaptureSettingMaxExposure()
-                setCaptureSetting(CaptureRequest.SENSOR_SENSITIVITY, 600) // iso
-                setCaptureSetting(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
-                setFocusDistanceMax()
-            }
-        }
-
         cameraCaptureSession().setRepeatingRequest(captureRequestBuilderForPreview().build(), null, backgroundHandler)
         d { "EZCam.startPreview:end" }
     }
@@ -372,8 +345,9 @@ constructor(
         }
     }
 
+
     companion object {
-        private const val MAX_IMAGES = 2
+        private const val MAX_IMAGES = 4
 
         private fun imageFormatToName(imageFormat: Int): String = when (imageFormat) {
             ImageFormat.JPEG -> "jpg"
