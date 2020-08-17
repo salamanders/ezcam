@@ -77,7 +77,7 @@ constructor(
         }
     }
 
-    private val previewSurface = LazySuspend {
+    private val previewSurface: LazySuspend<Surface> = LazySuspend {
         d { "EZCam.previewSurface:start" }
         if (previewTextureView.isAvailable) {
             Surface(previewTextureView.surfaceTexture).also {
@@ -102,7 +102,7 @@ constructor(
     }
 
     /** A fully opened camera */
-    private val cameraDevice = LazySuspend<CameraDevice> {
+    private val cameraDevice: LazySuspend<CameraDevice> = LazySuspend {
         if (ActivityCompat.checkSelfPermission(context, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             throw IllegalStateException("You don't have the required permissions to open the camera, try guarding with EZPermission.")
         }
@@ -138,7 +138,7 @@ constructor(
 
 
     /** A fully configured capture session */
-    private val cameraCaptureSession = LazySuspend<CameraCaptureSession> {
+    private val cameraCaptureSession: LazySuspend<CameraCaptureSession> = LazySuspend {
         d { "EZCam.cameraCaptureSession:start" }
         val cd = cameraDevice()
         val rs = previewSurface()
@@ -167,7 +167,7 @@ constructor(
     }
 
     /** Builder set to preview mode */
-    private val captureRequestBuilderForPreview = LazySuspend {
+    private val captureRequestBuilderForPreview: LazySuspend<CaptureRequest.Builder> = LazySuspend {
         cameraDevice().createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).also {
             it.addTarget(previewSurface())
             i { "captureRequestBuilderForPreview:created" }
@@ -176,7 +176,7 @@ constructor(
 
 
     /** Builder set to higher quality capture mode */
-    private val captureRequestBuilderForImageReader = LazySuspend {
+    private val captureRequestBuilderForImageReader: LazySuspend<CaptureRequest.Builder> = LazySuspend {
         cameraDevice().createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).also {
             it.addTarget(imageReader.surface)
 
@@ -224,11 +224,13 @@ constructor(
     }
 
     private val imageSizeForImageReader: Size by lazy {
-        cameraCharacteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!.getOutputSizes(imageFormat).maxBy {
-            it.width * it.height
-        }!!.also {
-            i { "Found max size for the camera: $it" }
-        }
+        cameraCharacteristics
+                .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
+                .getOutputSizes(imageFormat).maxByOrNull {
+                    it.width * it.height
+                }!!.also {
+                    i { "Found max size for the camera: $it" }
+                }
     }
 
     protected val cameraCharacteristics: CameraCharacteristics by lazy {
@@ -257,7 +259,7 @@ constructor(
             val configs = characteristics.get(
                     CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
             configs.outputFormats.contains(imageFormat)
-        }.maxBy { cameraId ->
+        }.maxByOrNull { cameraId ->
             when (cameraManager.getCameraCharacteristics(cameraId).get(CameraCharacteristics.LENS_FACING)) {
                 CameraCharacteristics.LENS_FACING_BACK -> 10
                 CameraCharacteristics.LENS_FACING_FRONT -> 3

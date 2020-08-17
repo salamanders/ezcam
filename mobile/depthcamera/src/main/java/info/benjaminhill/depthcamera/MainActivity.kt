@@ -39,6 +39,8 @@ class MainActivity : EZPermissionActivity() {
 
     private lateinit var depthCam: DepthCam
 
+    @ExperimentalCoroutinesApi
+    @ExperimentalUnsignedTypes
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
             takeDepthPictures()
@@ -76,7 +78,7 @@ class MainActivity : EZPermissionActivity() {
                         val (points, bitmap) = depthCam.depthToCloudAndBitmap((imageData))
                         bitmap.saveToMediaStore(applicationContext)
                         points.saveToDownloads()
-                        delay(1_000)
+                        delay(500)
                     }
             i { "Burst finished." }
         }
@@ -122,7 +124,7 @@ class MainActivity : EZPermissionActivity() {
     }
 
     companion object {
-        const val BURST_SIZE = 10
+        const val BURST_SIZE = 15
         internal val Float.str: String
             get() = "%.5f".format(this)
     }
